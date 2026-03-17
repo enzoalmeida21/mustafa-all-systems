@@ -110,11 +110,38 @@ export const supervisorService = {
   },
 
   // Rotas de configuração de rotas
-  async setPromoterRoute(promoterId: string, storeIds: string[], orders?: number[]) {
+  async setPromoterRoute(promoterId: string, storeIds: string[], orders?: number[], supervisorId?: string | null) {
     const response = await apiClient.post(`/supervisors/promoters/${promoterId}/route-assignment`, {
       storeIds,
       orders,
+      supervisorId: supervisorId || null,
     });
+    return response.data;
+  },
+
+  async addStoresToRoute(promoterId: string, storeIds: string[], supervisorId?: string | null) {
+    const response = await apiClient.post(`/supervisors/promoters/${promoterId}/route-assignment/add`, {
+      storeIds,
+      supervisorId: supervisorId || null,
+    });
+    return response.data;
+  },
+
+  async removeStoreFromRoute(promoterId: string, storeId: string) {
+    const response = await apiClient.delete(`/supervisors/promoters/${promoterId}/route-assignment/${storeId}`);
+    return response.data;
+  },
+
+  async updateRouteAssignmentSupervisor(promoterId: string, storeId: string, supervisorId: string | null) {
+    const response = await apiClient.patch(
+      `/supervisors/promoters/${promoterId}/route-assignment/${storeId}/supervisor`,
+      { supervisorId },
+    );
+    return response.data;
+  },
+
+  async getSupervisorsList(): Promise<{ supervisors: { id: string; name: string; email: string; state: string | null }[] }> {
+    const response = await apiClient.get('/supervisors/supervisors-list');
     return response.data;
   },
 
@@ -146,17 +173,35 @@ export const supervisorService = {
 
   async createStore(data: {
     name: string;
+    code?: string;
     address: string;
-    latitude: number;
-    longitude: number;
+    state?: string;
+    latitude?: number;
+    longitude?: number;
+    industryIds?: string[];
   }) {
     const response = await apiClient.post('/supervisors/stores', data);
     return response.data;
   },
 
+  async bulkCreateStores(stores: {
+    name: string;
+    code?: string;
+    address: string;
+    state?: string;
+    latitude?: number;
+    longitude?: number;
+    industryIds?: string[];
+  }[]) {
+    const response = await apiClient.post('/supervisors/stores/bulk', { stores });
+    return response.data;
+  },
+
   async updateStore(storeId: string, data: {
     name?: string;
+    code?: string | null;
     address?: string;
+    state?: string | null;
     latitude?: number;
     longitude?: number;
   }) {
@@ -193,6 +238,17 @@ export const supervisorService = {
     params.append('view', view);
     if (date) params.append('date', date);
     const response = await apiClient.get(`/supervisors/pending-industries?${params.toString()}`);
+    return response.data;
+  },
+
+  async getMyStates(): Promise<{ states: string[] }> {
+    const response = await apiClient.get('/supervisors/my-states');
+    return response.data;
+  },
+
+  async getPendingOverview(state?: string) {
+    const params = state ? `?state=${state}` : '';
+    const response = await apiClient.get(`/supervisors/pending-overview${params}`);
     return response.data;
   },
 };

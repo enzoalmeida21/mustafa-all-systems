@@ -1,5 +1,10 @@
+import type { ComponentType } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+
+// Type assertion for React 18 + react-router-dom JSX compatibility
+const RouterRoutes = Routes as ComponentType<{ children?: React.ReactNode }>;
+const RouterRoute = Route as ComponentType<Record<string, unknown>>;
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import PromoterDetails from './pages/PromoterDetails';
@@ -11,6 +16,7 @@ import StoresManagement from './pages/StoresManagement';
 import IndustriesManagement from './pages/IndustriesManagement';
 import IndustryCoverage from './pages/IndustryCoverage';
 import StoreIndustriesConfig from './pages/StoreIndustriesConfig';
+import IndustryOwnerDashboard from './pages/IndustryOwnerDashboard';
 import Admin from './pages/Admin';
 import Layout from './components/Layout';
 
@@ -57,8 +63,25 @@ function SupervisorOrAdminRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
 
-  // ADMIN tem acesso a todas as funcionalidades de SUPERVISOR
   if (user.role !== 'SUPERVISOR' && user.role !== 'ADMIN') {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function IndustryOwnerRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <div>Carregando...</div>;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user.role !== 'INDUSTRY_OWNER' && user.role !== 'ADMIN') {
     return <Navigate to="/" replace />;
   }
 
@@ -67,9 +90,9 @@ function SupervisorOrAdminRoute({ children }: { children: React.ReactNode }) {
 
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route
+    <RouterRoutes>
+      <RouterRoute path="/login" element={<Login />} />
+      <RouterRoute
         path="/"
         element={
           <ProtectedRoute>
@@ -78,7 +101,7 @@ function AppRoutes() {
         }
       >
         {/* Dashboard e telas de supervisão: apenas SUPERVISOR e ADMIN */}
-        <Route
+        <RouterRoute
           index
           element={
             <SupervisorOrAdminRoute>
@@ -86,7 +109,7 @@ function AppRoutes() {
             </SupervisorOrAdminRoute>
           }
         />
-        <Route
+        <RouterRoute
           path="promoters/:id"
           element={
             <SupervisorOrAdminRoute>
@@ -94,7 +117,7 @@ function AppRoutes() {
             </SupervisorOrAdminRoute>
           }
         />
-        <Route
+        <RouterRoute
           path="promoters/:id/route"
           element={
             <SupervisorOrAdminRoute>
@@ -104,7 +127,7 @@ function AppRoutes() {
         />
 
         {/* Configuração de rotas e gestão de lojas: apenas ADMIN */}
-        <Route
+        <RouterRoute
           path="routes/config"
           element={
             <AdminRoute>
@@ -112,7 +135,7 @@ function AppRoutes() {
             </AdminRoute>
           }
         />
-        <Route
+        <RouterRoute
           path="stores"
           element={
             <SupervisorOrAdminRoute>
@@ -122,7 +145,7 @@ function AppRoutes() {
         />
 
         {/* Telas exclusivas de admin */}
-        <Route
+        <RouterRoute
           path="industries"
           element={
             <AdminRoute>
@@ -130,7 +153,7 @@ function AppRoutes() {
             </AdminRoute>
           }
         />
-        <Route
+        <RouterRoute
           path="industries/coverage"
           element={
             <AdminRoute>
@@ -138,7 +161,7 @@ function AppRoutes() {
             </AdminRoute>
           }
         />
-        <Route
+        <RouterRoute
           path="stores/industries"
           element={
             <AdminRoute>
@@ -146,7 +169,7 @@ function AppRoutes() {
             </AdminRoute>
           }
         />
-        <Route
+        <RouterRoute
           path="admin"
           element={
             <AdminRoute>
@@ -156,7 +179,7 @@ function AppRoutes() {
         />
 
         {/* Relatórios: SUPERVISOR e ADMIN */}
-        <Route
+        <RouterRoute
           path="reports"
           element={
             <SupervisorOrAdminRoute>
@@ -165,10 +188,20 @@ function AppRoutes() {
           }
         />
 
+        {/* Dashboard do Dono de Indústria */}
+        <RouterRoute
+          path="industry-dashboard"
+          element={
+            <IndustryOwnerRoute>
+              <IndustryOwnerDashboard />
+            </IndustryOwnerRoute>
+          }
+        />
+
         {/* Configurações gerais - qualquer usuário autenticado */}
-        <Route path="settings" element={<Settings />} />
-      </Route>
-    </Routes>
+        <RouterRoute path="settings" element={<Settings />} />
+      </RouterRoute>
+    </RouterRoutes>
   );
 }
 

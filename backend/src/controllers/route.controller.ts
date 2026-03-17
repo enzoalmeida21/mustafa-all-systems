@@ -5,8 +5,9 @@ import prisma from '../prisma/client';
 
 const createRouteSchema = z.object({
   storeIds: z.array(z.string().uuid()).min(1, 'Selecione pelo menos uma loja'),
-  orders: z.array(z.number().int().min(0)).optional(), // Ordem opcional
-  expectedHours: z.record(z.string().uuid(), z.number()).optional(), // { [storeId]: hours }
+  orders: z.array(z.number().int().min(0)).optional(),
+  expectedHours: z.record(z.string().uuid(), z.number()).optional(),
+  supervisorId: z.string().uuid().optional().nullable(),
 });
 
 const updateRouteSchema = z.object({
@@ -24,9 +25,8 @@ export async function setPromoterRoute(req: AuthRequest, res: Response) {
       return res.status(400).json({ message: 'ID do promotor inválido' });
     }
 
-    const { storeIds, orders, expectedHours } = createRouteSchema.parse(req.body);
+    const { storeIds, orders, expectedHours, supervisorId } = createRouteSchema.parse(req.body);
 
-    // Verificar se o promotor existe
     const promoter = await prisma.user.findUnique({
       where: { id: promoterId },
     });
@@ -35,7 +35,6 @@ export async function setPromoterRoute(req: AuthRequest, res: Response) {
       return res.status(404).json({ message: 'Promotor não encontrado' });
     }
 
-    // Verificar se todas as lojas existem
     const stores = await prisma.store.findMany({
       where: { id: { in: storeIds } },
     });
@@ -44,12 +43,10 @@ export async function setPromoterRoute(req: AuthRequest, res: Response) {
       return res.status(400).json({ message: 'Uma ou mais lojas não foram encontradas' });
     }
 
-    // Deletar atribuições antigas do promotor
     await prisma.routeAssignment.deleteMany({
       where: { promoterId },
     });
 
-    // Criar novas atribuições
     const assignments = await Promise.all(
       storeIds.map((storeId, index) =>
         prisma.routeAssignment.create({
@@ -59,6 +56,7 @@ export async function setPromoterRoute(req: AuthRequest, res: Response) {
             order: orders?.[index] ?? index,
             expectedHours: expectedHours?.[storeId] || null,
             isActive: true,
+            supervisorId: supervisorId || null,
           },
           include: {
             store: true,
@@ -89,6 +87,98 @@ export async function setPromoterRoute(req: AuthRequest, res: Response) {
       return res.status(400).json({ message: error.errors[0].message });
     }
     console.error('Set promoter route error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Adicionar lojas à rota existente de um promotor (sem remover as atuais)
+ */
+export async function addStoresToRoute(req: AuthRequest, res: Response) {
+  try {
+    const { promoterId } = req.params;
+    if (!z.string().uuid().safeParse(promoterId).success) {
+      return res.status(400).json({ message: 'ID do promotor inválido' });
+    }
+
+    const { storeIds, supervisorId } = z.object({
+      storeIds: z.array(z.string().uuid()).min(1, 'Selecione pelo menos uma loja'),
+      supervisorId: z.string().uuid().optional().nullable(),
+    }).parse(req.body);
+
+    const promoter = await prisma.user.findUnique({ where: { id: promoterId } });
+    if (!promoter || promoter.role !== 'PROMOTER') {
+      return res.status(404).json({ message: 'Promotor não encontrado' });
+    }
+
+    const stores = await prisma.store.findMany({ where: { id: { in: storeIds } } });
+    if (stores.length !== storeIds.length) {
+      return res.status(400).json({ message: 'Uma ou mais lojas não foram encontradas' });
+    }
+
+    if (supervisorId) {
+      const supervisor = await prisma.user.findUnique({ where: { id: supervisorId } });
+      if (!supervisor || supervisor.role !== 'SUPERVISOR') {
+        return res.status(400).json({ message: 'Supervisor não encontrado' });
+      }
+    }
+
+    const existing = await prisma.routeAssignment.findMany({
+      where: { promoterId, isActive: true },
+      orderBy: { order: 'desc' },
+    });
+    const existingStoreIds = new Set(existing.map(a => a.storeId));
+    const maxOrder = existing.length > 0 ? existing[0].order : -1;
+
+    const newStoreIds = storeIds.filter(id => !existingStoreIds.has(id));
+    if (newStoreIds.length === 0) {
+      return res.json({ message: 'Todas as lojas já estão atribuídas', added: 0 });
+    }
+
+    await Promise.all(
+      newStoreIds.map((storeId, index) =>
+        prisma.routeAssignment.create({
+          data: {
+            promoterId,
+            storeId,
+            order: maxOrder + 1 + index,
+            isActive: true,
+            supervisorId: supervisorId || null,
+          },
+        })
+      )
+    );
+
+    res.json({ message: `${newStoreIds.length} loja(s) adicionada(s)`, added: newStoreIds.length });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.errors[0].message });
+    }
+    console.error('Add stores to route error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Remover uma loja específica da rota de um promotor
+ */
+export async function removeStoreFromRoute(req: AuthRequest, res: Response) {
+  try {
+    const { promoterId, storeId } = req.params;
+
+    const assignment = await prisma.routeAssignment.findUnique({
+      where: { promoterId_storeId: { promoterId, storeId } },
+    });
+
+    if (!assignment) {
+      return res.status(404).json({ message: 'Atribuição não encontrada' });
+    }
+
+    await prisma.routeAssignment.delete({ where: { id: assignment.id } });
+
+    res.json({ message: 'Loja removida da rota' });
+  } catch (error) {
+    console.error('Remove store from route error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 }
@@ -156,6 +246,9 @@ export async function getAllRoutes(req: AuthRequest, res: Response) {
           where: { isActive: true },
           include: {
             store: true,
+            supervisor: {
+              select: { id: true, name: true },
+            },
           },
           orderBy: {
             order: 'asc',
@@ -179,6 +272,7 @@ export async function getAllRoutes(req: AuthRequest, res: Response) {
         },
         order: a.order,
         expectedHours: a.expectedHours,
+        supervisor: a.supervisor ? { id: a.supervisor.id, name: a.supervisor.name } : null,
       })),
       totalStores: promoter.routeAssignments.length,
     }));
@@ -186,6 +280,52 @@ export async function getAllRoutes(req: AuthRequest, res: Response) {
     res.json({ routes });
   } catch (error) {
     console.error('Get all routes error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Atualizar o supervisor de uma atribuição de rota existente
+ */
+export async function updateRouteAssignmentSupervisor(req: AuthRequest, res: Response) {
+  try {
+    const { promoterId, storeId } = req.params;
+    const { supervisorId } = z.object({
+      supervisorId: z.string().uuid().nullable(),
+    }).parse(req.body);
+
+    const assignment = await prisma.routeAssignment.findUnique({
+      where: { promoterId_storeId: { promoterId, storeId } },
+    });
+
+    if (!assignment) {
+      return res.status(404).json({ message: 'Atribuição não encontrada' });
+    }
+
+    if (supervisorId) {
+      const supervisor = await prisma.user.findUnique({ where: { id: supervisorId } });
+      if (!supervisor || supervisor.role !== 'SUPERVISOR') {
+        return res.status(400).json({ message: 'Supervisor não encontrado' });
+      }
+    }
+
+    const updated = await prisma.routeAssignment.update({
+      where: { id: assignment.id },
+      data: { supervisorId },
+      include: {
+        supervisor: { select: { id: true, name: true } },
+      },
+    });
+
+    res.json({
+      message: 'Supervisor atualizado',
+      supervisor: updated.supervisor ? { id: updated.supervisor.id, name: updated.supervisor.name } : null,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.errors[0].message });
+    }
+    console.error('Update route assignment supervisor error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 }

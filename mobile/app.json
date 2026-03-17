@@ -15,8 +15,7 @@
       "**/*"
     ],
     "updates": {
-      "enabled": true,
-      "fallbackToCacheTimeout": 30000
+      "enabled": true
     },
     "runtimeVersion": {
       "policy": "sdkVersion"

@@ -11,6 +11,12 @@ build/
 .env
 .env.local
 .env.*.local
+.firebase-env.txt
+*.env.txt
+
+# Firebase / GCP credentials (never commit)
+*-key.json
+serviceAccount*.json
 
 # IDE
 .vscode/
@@ -45,3 +51,6 @@ web/.env
 # AWS
 .aws/
 
+firebase.json
+.gitignore
+firestore.rules

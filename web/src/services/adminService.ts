@@ -40,25 +40,29 @@ export interface User {
   email: string;
   name: string;
   phone?: string | null;
-  role: 'PROMOTER' | 'SUPERVISOR' | 'ADMIN';
+  role: 'PROMOTER' | 'SUPERVISOR' | 'ADMIN' | 'INDUSTRY_OWNER';
+  state?: string | null;
   createdAt: string;
   updatedAt: string;
+  supervisorRegions?: { state: string }[];
 }
 
 export interface CreateUserRequest {
   email: string;
   name: string;
   password: string;
-  role: 'PROMOTER' | 'SUPERVISOR' | 'ADMIN';
+  role: 'PROMOTER' | 'SUPERVISOR' | 'ADMIN' | 'INDUSTRY_OWNER';
   phone?: string;
+  state?: string;
 }
 
 export interface UpdateUserRequest {
   email?: string;
   name?: string;
   password?: string;
-  role?: 'PROMOTER' | 'SUPERVISOR' | 'ADMIN';
+  role?: 'PROMOTER' | 'SUPERVISOR' | 'ADMIN' | 'INDUSTRY_OWNER';
   phone?: string;
+  state?: string | null;
 }
 
 export interface ListUsersResponse {
@@ -92,6 +96,37 @@ export const adminService = {
 
   async deleteUser(id: string): Promise<void> {
     await apiClient.delete(`/admin/users/${id}`);
+  },
+
+  async getSupervisorRegions(supervisorId: string): Promise<string[]> {
+    const response = await apiClient.get(`/admin/supervisors/${supervisorId}/regions`);
+    return response.data.states;
+  },
+
+  async setSupervisorRegions(supervisorId: string, states: string[]): Promise<string[]> {
+    const response = await apiClient.post(`/admin/supervisors/${supervisorId}/regions`, { states });
+    return response.data.states;
+  },
+
+  async getPromoterSupervisors(promoterId: string): Promise<{ id: string; name: string; email: string }[]> {
+    const response = await apiClient.get(`/admin/promoters/${promoterId}/supervisors`);
+    return response.data.supervisors;
+  },
+
+  async setPromoterSupervisors(promoterId: string, supervisorIds: string[]): Promise<void> {
+    await apiClient.post(`/admin/promoters/${promoterId}/supervisors`, { supervisorIds });
+  },
+
+  async getPromoterIndustryAssignments(promoterId: string): Promise<{ id: string; industry: { id: string; name: string; code: string }; storeId: string | null }[]> {
+    const response = await apiClient.get(`/industry-assignments/promoter/${promoterId}`);
+    return response.data.assignments || [];
+  },
+
+  async setPromoterStoreIndustries(promoterId: string, storeId: string, industryIds: string[]): Promise<{ industries: { id: string; name: string; code: string }[] }> {
+    const response = await apiClient.put(`/industry-assignments/promoter/${promoterId}/store/${storeId}`, {
+      industryIds,
+    });
+    return response.data;
   },
 };
 

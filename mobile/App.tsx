@@ -7,9 +7,16 @@ type UseAuthHook = typeof import('./src/context/AuthContext')['useAuth'];
 type NavigatorComponent = React.ComponentType<any>;
 type LoadingScreenComponent = React.ComponentType<any>;
 
-console.log('🚀 App.tsx - Iniciando imports...');
+console.log('App.tsx - Iniciando imports...');
 
-// Imports com tratamento de erro
+let offlineSyncSetup: (() => () => void) | undefined;
+try {
+  const syncModule = require('./src/services/offlineSyncService');
+  offlineSyncSetup = syncModule.offlineSyncService?.setupAutoSync?.bind(syncModule.offlineSyncService);
+} catch (error) {
+  console.warn('offlineSyncService não disponível:', error);
+}
+
 let NavigationContainer: NavigationContainerComponent | undefined;
 let StatusBar: StatusBarComponent | undefined;
 let AuthProvider: AuthProviderComponent | undefined;
@@ -116,7 +123,7 @@ function AppNavigator() {
   // Sempre renderizar NavigationContainer para manter consistência dos hooks
   // Renderizar o navigator apropriado dentro dele
   return (
-    <NavigationContainer>
+    <NavigationContainer navigationInChildEnabled>
       {user && MainNavigator ? (
         <MainNavigator />
       ) : (
@@ -127,10 +134,21 @@ function AppNavigator() {
 }
 
 export default function App() {
-  console.log('🚀 App.tsx - Função App executada');
+  const { useEffect: useEffectHook } = require('react');
+
+  useEffectHook(() => {
+    let unsubscribe: (() => void) | undefined;
+    if (offlineSyncSetup) {
+      try {
+        unsubscribe = offlineSyncSetup();
+      } catch {}
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
   
   if (!AuthProvider || !StatusBar) {
-    console.error('❌ AuthProvider ou StatusBar não foram carregados');
     return null;
   }
 
@@ -143,7 +161,6 @@ export default function App() {
     );
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('❌ Erro ao renderizar App:', err);
     const { View, Text } = require('react-native');
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>

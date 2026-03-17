@@ -8,11 +8,17 @@ import {
   setPhotoQuota,
   exportReport,
   getPendingIndustries,
+  getMyStates,
+  getPendingOverview,
+  getScopedPromoters,
 } from '../controllers/supervisor.controller';
 import { getPromoters } from '../controllers/promoters.controller';
 import { downloadExport, getExportStatus } from '../controllers/export.controller';
 import {
   setPromoterRoute,
+  addStoresToRoute,
+  removeStoreFromRoute,
+  updateRouteAssignmentSupervisor,
   getPromoterRoute as getPromoterRouteAssignment,
   getAllRoutes,
   getAvailableStores,
@@ -22,6 +28,7 @@ import {
 } from '../controllers/route.controller';
 import {
   createStore,
+  bulkCreateStores,
   updateStore,
   deleteStore,
   getAllStores,
@@ -36,7 +43,9 @@ router.use(authenticate);
 
 // 🔒 Rotas de dashboard e relatórios - acessíveis para SUPERVISOR e ADMIN
 router.get('/dashboard', requireSupervisor, getDashboard);
-router.get('/promoters', requireSupervisor, getPromoters);
+router.get('/my-states', requireSupervisor, getMyStates);
+router.get('/pending-overview', requireSupervisor, getPendingOverview);
+router.get('/promoters', requireSupervisor, getScopedPromoters);
 router.get('/promoters/:id/performance', requireSupervisor, getPromoterPerformance);
 router.get('/promoters/:id/visits', requireSupervisor, getPromoterVisits);
 router.get('/promoters/:id/route', requireSupervisor, getPromoterRoute); // Rota histórica (visitas do dia)
@@ -49,6 +58,9 @@ router.get('/export/download/:id', requireSupervisor, downloadExport);
 
 // 🔒 Rotas de configuração de rotas (assignments) - apenas ADMIN
 router.post('/promoters/:promoterId/route-assignment', requireAdmin, setPromoterRoute);
+router.post('/promoters/:promoterId/route-assignment/add', requireAdmin, addStoresToRoute);
+router.delete('/promoters/:promoterId/route-assignment/:storeId', requireAdmin, removeStoreFromRoute);
+router.patch('/promoters/:promoterId/route-assignment/:storeId/supervisor', requireAdmin, updateRouteAssignmentSupervisor);
 router.get(
   '/promoters/:promoterId/route-assignment',
   requireAdmin,
@@ -62,12 +74,26 @@ router.put(
 router.get('/promoters/:promoterId/hours-report', requireAdmin, getPromoterHoursReport);
 router.get('/promoters/hours-report', requireAdmin, getAllPromotersHoursReport);
 router.get('/routes', requireAdmin, getAllRoutes);
+router.get('/supervisors-list', requireAdmin, async (req, res) => {
+  try {
+    const prisma = (await import('../prisma/client')).default;
+    const supervisors = await prisma.user.findMany({
+      where: { role: 'SUPERVISOR' },
+      select: { id: true, name: true, email: true, state: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json({ supervisors });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 router.get('/stores/available', requireAdmin, getAvailableStores);
 
 // 🔒 Rotas de gerenciamento de lojas - SUPERVISOR e ADMIN
 router.get('/stores', requireSupervisor, getAllStores);
 router.get('/stores/:id', requireSupervisor, getStore);
 router.post('/stores', requireSupervisor, createStore);
+router.post('/stores/bulk', requireSupervisor, bulkCreateStores);
 router.put('/stores/:id', requireSupervisor, updateStore);
 router.delete('/stores/:id', requireSupervisor, deleteStore);
 

@@ -10,11 +10,10 @@ import {
   Image,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { visitService } from '../services/visitService';
 import { photoService } from '../services/photoService';
-import { industryService } from '../services/industryService';
+import { useVisitFlow } from '../features/visits';
 import { colors, theme } from '../styles/theme';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -38,6 +37,7 @@ type RootStackParamList = {
 export default function CheckoutScreen({ route }: any) {
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const { visit: initialVisit } = route.params || {};
+  const { clearVisit, pendingPhotosCount, pendingSurveysCount } = useVisitFlow();
   const [visit, setVisit] = useState<Visit | null>(initialVisit);
   const [location, setLocation] = useState<LocationObject | null>(null);
   const [loading, setLoading] = useState(false);
@@ -137,7 +137,7 @@ export default function CheckoutScreen({ route }: any) {
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.8,
         allowsEditing: false,
       });
@@ -206,22 +206,32 @@ export default function CheckoutScreen({ route }: any) {
         photoUrl: url,
       });
 
-      console.log('✅ [Checkout] Checkout realizado com sucesso:', result);
+      // Limpar estado local -- o backend é a fonte de verdade para checkout
+      try {
+        await clearVisit();
+      } catch {}
 
       const hoursWorked = result.visit?.hoursWorked || '0.00';
+
+      const hasPending = pendingPhotosCount > 0 || pendingSurveysCount > 0;
+      const pendingMsg = hasPending
+        ? `\n\n${pendingPhotosCount} foto(s) e ${pendingSurveysCount} pesquisa(s) serão sincronizadas quando houver internet.`
+        : '';
+
       Alert.alert(
-        '✅ Sucesso',
-        `Checkout realizado com sucesso!\n\nHoras trabalhadas: ${hoursWorked}h`,
+        'Sucesso',
+        `Checkout realizado com sucesso!\n\nHoras trabalhadas: ${hoursWorked}h${pendingMsg}`,
         [
           {
             text: 'OK',
-            onPress: () => navigation.navigate('Home'),
+            onPress: () => {
+              navigation.navigate('Home');
+            },
           },
         ]
       );
     } catch (error: any) {
-      console.error('❌ [Checkout] Erro no checkout:', error);
-      console.error('❌ [Checkout] Response:', error?.response?.data);
+      console.error('[Checkout] Erro no checkout:', error);
       Alert.alert('Erro', error?.response?.data?.message || 'Não foi possível fazer checkout');
     } finally {
       setLoading(false);
@@ -478,6 +488,16 @@ export default function CheckoutScreen({ route }: any) {
         </View>
       </Card>
 
+      {/* Pendências de sincronização */}
+      {(pendingPhotosCount > 0 || pendingSurveysCount > 0) && (
+        <Card style={styles.pendingSyncCard} shadow>
+          <Text style={styles.pendingSyncTitle}>Itens pendentes de sincronização</Text>
+          <Text style={styles.pendingSyncDetail}>
+            {pendingPhotosCount} foto(s) e {pendingSurveysCount} pesquisa(s) serão enviadas quando houver internet.
+          </Text>
+        </Card>
+      )}
+
       {/* Ações */}
       <View style={styles.actions}>
         {!showPreview && (
@@ -488,7 +508,7 @@ export default function CheckoutScreen({ route }: any) {
             disabled={loading}
             style={styles.actionButton}
           >
-            📷 Tirar Foto
+            Tirar Foto
           </Button>
         )}
         <Button
@@ -499,7 +519,7 @@ export default function CheckoutScreen({ route }: any) {
           disabled={!photoUri || !location || loading}
           style={styles.actionButton}
         >
-          ✅ Finalizar Checkout
+          Finalizar Checkout
         </Button>
       </View>
     </ScrollView>
@@ -743,5 +763,21 @@ const styles = StyleSheet.create({
   },
   errorButton: {
     width: '100%',
+  },
+  pendingSyncCard: {
+    marginBottom: theme.spacing.lg,
+    padding: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  pendingSyncTitle: {
+    fontSize: theme.typography.fontSize.base,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: '#f59e0b',
+    marginBottom: theme.spacing.xs,
+  },
+  pendingSyncDetail: {
+    fontSize: theme.typography.fontSize.sm,
+    color: colors.text.secondary,
   },
 });

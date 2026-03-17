@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,18 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  Modal,
+  FlatList,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { visitService } from '../services/visitService';
 import { photoService } from '../services/photoService';
 import { industryService } from '../services/industryService';
+import { offlineSyncService } from '../services/offlineSyncService';
+import { useVisitFlow } from '../features/visits';
 import { colors, theme } from '../styles/theme';
+import Button from '../components/ui/Button';
 import { requestForegroundPermissions, getCurrentPosition } from '../utils/locationHelper';
 import { savePendingPhotos, getPendingPhotos, clearPendingPhotos, PendingPhoto } from '../utils/sessionStorage';
 
@@ -30,6 +35,8 @@ interface Visit {
     id: string;
     url: string;
     type: 'FACADE_CHECKIN' | 'FACADE_CHECKOUT' | 'OTHER';
+    industryId?: string;
+    selectedIndustryId?: string;
   }>;
 }
 
@@ -38,7 +45,14 @@ type VisitPhoto = {
   uri?: string;
   url?: string;
   type: 'FACADE_CHECKIN' | 'FACADE_CHECKOUT' | 'OTHER';
-  industryId?: string; // Indústria selecionada para fotos OTHER
+  industryId?: string;
+};
+
+type Industry = {
+  id: string;
+  name: string;
+  code: string;
+  description?: string;
 };
 
 type ActiveVisitNavigation = NavigationProp<Record<string, object | undefined>>;
@@ -46,67 +60,103 @@ type ActiveVisitNavigation = NavigationProp<Record<string, object | undefined>>;
 export default function ActiveVisitScreen({ route }: any) {
   const navigation = useNavigation<ActiveVisitNavigation>();
   const { visit: initialVisit } = route.params || {};
+  const { setWorking, pendingPhotosCount, pendingSurveysCount, clearVisit } = useVisitFlow();
   const [visit, setVisit] = useState<Visit | null>(initialVisit);
-  const [loading, setLoading] = useState(false);
+  const [loadingVisit, setLoadingVisit] = useState(!initialVisit);
   const [uploading, setUploading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [photos, setPhotos] = useState<VisitPhoto[]>([]);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
-  const [industries, setIndustries] = useState<any[]>([]);
-  const [showIndustryModal, setShowIndustryModal] = useState(false);
-  const [photoForIndustrySelection, setPhotoForIndustrySelection] = useState<number | null>(null);
-  const [tempPhoto, setTempPhoto] = useState<string | null>(null); // Foto temporária aguardando seleção de indústria
+  const [industries, setIndustries] = useState<Industry[]>([]);
+  const [activeIndustryId, setActiveIndustryId] = useState<string | null>(null);
+  const [expandedIndustries, setExpandedIndustries] = useState<Set<string>>(new Set());
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
+  const [onboardingSelectedIds, setOnboardingSelectedIds] = useState<Set<string>>(new Set());
+  const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
 
   useEffect(() => {
     loadCurrentVisit();
     restorePendingPhotos();
+    setWorking().catch(() => {});
   }, []);
 
-  // Carregar indústrias quando a visita estiver disponível
   useEffect(() => {
-    if (visit?.store?.id) {
+    if (visit?.id && visit?.store?.id) {
       loadIndustries();
     }
-  }, [visit?.store?.id]);
+  }, [visit?.id, visit?.store?.id]);
 
   async function loadIndustries() {
-    if (!visit?.store?.id) return;
-    
+    if (!visit?.id || !visit?.store?.id) return;
+
     try {
-      // Buscar indústrias obrigatórias da LOJA atual
-      const storeIndustries = await industryService.getStoreIndustries(visit.store.id);
-      setIndustries(storeIndustries);
-      console.log(`📦 [ActiveVisit] Carregadas ${storeIndustries.length} indústrias da loja`);
+      const data = await industryService.getVisitIndustries(visit.id);
+      setIndustries(data.industries);
+      setNeedsOnboarding(data.needsOnboarding);
+      if (!data.needsOnboarding) {
+        setExpandedIndustries(new Set(data.industries.map((i: Industry) => i.id)));
+      } else {
+        setOnboardingSelectedIds(new Set());
+      }
     } catch (error) {
-      console.error('Error loading store industries:', error);
-      // Se falhar, tentar buscar indústrias do promotor como fallback
+      console.error('Error loading industries:', error);
       try {
-        const assignments = await industryService.getPromoterIndustries();
-        setIndustries(assignments.map(a => a.industry));
+        const storeIndustries = await industryService.getStoreIndustries(visit.store.id);
+        if (storeIndustries.length > 0) {
+          setIndustries(storeIndustries);
+          setNeedsOnboarding(true);
+          setOnboardingSelectedIds(new Set());
+        }
       } catch (e) {
-        console.error('Error loading fallback industries:', e);
+        console.error('Error fallback load industries:', e);
       }
     }
   }
 
-  // Restaurar fotos pendentes ao abrir a tela
+  function toggleOnboardingIndustry(id: string) {
+    setOnboardingSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function confirmOnboarding() {
+    if (!visit?.store?.id || onboardingSelectedIds.size === 0) return;
+    setOnboardingSubmitting(true);
+    try {
+      const res = await industryService.setMyStoreIndustries(
+        visit.store.id,
+        Array.from(onboardingSelectedIds),
+      );
+      setNeedsOnboarding(false);
+      setIndustries(res.industries);
+      setExpandedIndustries(new Set(res.industries.map((i: Industry) => i.id)));
+    } catch (error) {
+      console.error('Error saving store industries:', error);
+      Alert.alert('Erro', 'Não foi possível salvar. Tente novamente.');
+    } finally {
+      setOnboardingSubmitting(false);
+    }
+  }
+
   async function restorePendingPhotos() {
     if (!visit?.id) return;
-    
+
     try {
       const pendingPhotos = await getPendingPhotos(visit.id);
       if (pendingPhotos.length > 0) {
-        // Converter fotos pendentes para o formato esperado
         const restoredPhotos: VisitPhoto[] = pendingPhotos.map(photo => ({
           uri: photo.uri,
           type: photo.type,
+          industryId: photo.industryId,
         }));
         setPhotos((prev) => {
-          // Evitar duplicatas
           const existingUris = new Set(prev.map(p => p.uri || p.url));
           const newPhotos = restoredPhotos.filter(p => p.uri && !existingUris.has(p.uri));
           return [...prev, ...newPhotos];
         });
-        console.log(`[ActiveVisitScreen] Restauradas ${restoredPhotos.length} fotos pendentes`);
       }
     } catch (error) {
       console.error('[ActiveVisitScreen] Erro ao restaurar fotos pendentes:', error);
@@ -115,23 +165,59 @@ export default function ActiveVisitScreen({ route }: any) {
 
   async function loadCurrentVisit() {
     try {
+      setLoadingVisit(true);
       const response = await visitService.getCurrentVisit();
       if (response.visit) {
         setVisit(response.visit);
-        setPhotos(
-          (response.visit.photos || []).map((photo: Visit['photos'][number]) => ({
+        const workPhotos = (response.visit.photos || [])
+          .filter((photo: Visit['photos'][number]) =>
+            photo.type !== 'FACADE_CHECKIN' && photo.type !== 'FACADE_CHECKOUT'
+          )
+          .map((photo: Visit['photos'][number]) => ({
             id: photo.id,
             url: photo.url,
             type: photo.type ?? 'OTHER',
-          }))
-        );
+            industryId: photo.selectedIndustryId || photo.industryId,
+          }));
+        setPhotos(workPhotos);
+      } else {
+        await clearVisit();
+        setVisit(null);
+        navigation.navigate('Stores');
       }
     } catch (error) {
       console.error('Error loading visit:', error);
+      await clearVisit();
+      setVisit(null);
+      navigation.navigate('Stores');
+    } finally {
+      setLoadingVisit(false);
     }
   }
 
-  async function pickImage() {
+  const savePendingPhotosToStorage = useCallback(async (visitId: string, photosToSave: VisitPhoto[]) => {
+    try {
+      const pendingPhotos: PendingPhoto[] = photosToSave
+        .filter(p => p.uri && !p.url)
+        .map(p => ({
+          uri: p.uri!,
+          type: p.type,
+          visitId,
+          industryId: p.industryId,
+          timestamp: Date.now(),
+        }));
+
+      if (pendingPhotos.length > 0) {
+        await savePendingPhotos(visitId, pendingPhotos);
+      }
+    } catch (error) {
+      console.error('[ActiveVisitScreen] Erro ao salvar fotos pendentes:', error);
+    }
+  }, []);
+
+  // ---- Novo fluxo: primeiro indústria, depois fotos ----
+
+  async function pickImagesForIndustry(industryId: string) {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
@@ -140,59 +226,37 @@ export default function ActiveVisitScreen({ route }: any) {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: false, // Apenas uma foto por vez para garantir seleção de indústria
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
         quality: 0.8,
+        selectionLimit: 20,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        // Se houver indústrias configuradas, exigir seleção
-        if (industries.length > 0) {
-          // Guardar foto temporariamente e abrir modal
-          setTempPhoto(result.assets[0].uri);
-          setShowIndustryModal(true);
-        } else {
-          // Sem indústrias configuradas, adicionar direto
-          const newPhoto: VisitPhoto = {
-            uri: result.assets[0].uri,
-            type: 'OTHER',
-          };
-          setPhotos((prev) => {
-            const updated = [...prev, newPhoto];
-            if (visit?.id) {
-              savePendingPhotosToStorage(visit.id, updated);
-            }
-            return updated;
-          });
-        }
+      if (!result.canceled && result.assets.length > 0) {
+        const newPhotos: VisitPhoto[] = result.assets.map(asset => ({
+          uri: asset.uri,
+          type: 'OTHER' as const,
+          industryId,
+        }));
+
+        setPhotos((prev) => {
+          const updated = [...prev, ...newPhotos];
+          if (visit?.id) {
+            savePendingPhotosToStorage(visit.id, updated);
+          }
+          return updated;
+        });
+
+        // Garantir que a indústria fique expandida
+        setExpandedIndustries(prev => new Set(prev).add(industryId));
       }
     } catch (error) {
-      console.error('Erro ao selecionar imagem:', error);
-      Alert.alert('Erro', 'Não foi possível selecionar a imagem');
+      console.error('Erro ao selecionar imagens:', error);
+      Alert.alert('Erro', 'Não foi possível selecionar as imagens');
     }
   }
 
-  // Função auxiliar para salvar fotos pendentes
-  const savePendingPhotosToStorage = async (visitId: string, photosToSave: VisitPhoto[]) => {
-    try {
-      const pendingPhotos: PendingPhoto[] = photosToSave
-        .filter(p => p.uri && !p.url) // Apenas fotos não enviadas (sem URL)
-        .map(p => ({
-          uri: p.uri!,
-          type: p.type,
-          visitId,
-          timestamp: Date.now(),
-        }));
-      
-      if (pendingPhotos.length > 0) {
-        await savePendingPhotos(visitId, pendingPhotos);
-      }
-    } catch (error) {
-      console.error('[ActiveVisitScreen] Erro ao salvar fotos pendentes:', error);
-    }
-  };
-
-  async function takePhoto() {
+  async function takePhotoForIndustry(industryId: string) {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
@@ -201,30 +265,26 @@ export default function ActiveVisitScreen({ route }: any) {
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets[0]) {
-        // Se houver indústrias configuradas, exigir seleção
-        if (industries.length > 0) {
-          // Guardar foto temporariamente e abrir modal
-          setTempPhoto(result.assets[0].uri);
-          setShowIndustryModal(true);
-        } else {
-          // Sem indústrias configuradas, adicionar direto
-          const newPhoto: VisitPhoto = {
-            uri: result.assets[0].uri,
-            type: 'OTHER',
-          };
-          setPhotos((prev) => {
-            const updated = [...prev, newPhoto];
-            if (visit?.id) {
-              savePendingPhotosToStorage(visit.id, updated);
-            }
-            return updated;
-          });
-        }
+        const newPhoto: VisitPhoto = {
+          uri: result.assets[0].uri,
+          type: 'OTHER',
+          industryId,
+        };
+
+        setPhotos((prev) => {
+          const updated = [...prev, newPhoto];
+          if (visit?.id) {
+            savePendingPhotosToStorage(visit.id, updated);
+          }
+          return updated;
+        });
+
+        setExpandedIndustries(prev => new Set(prev).add(industryId));
       }
     } catch (error) {
       console.error('Erro ao capturar foto:', error);
@@ -232,49 +292,133 @@ export default function ActiveVisitScreen({ route }: any) {
     }
   }
 
-  // Função para selecionar indústria para a foto temporária
-  function handleIndustrySelect(industryId: string) {
-    if (tempPhoto) {
-      const newPhoto: VisitPhoto = {
-        uri: tempPhoto,
-        type: 'OTHER',
-        industryId: industryId,
-      };
-      setPhotos((prev) => {
-        const updated = [...prev, newPhoto];
-        if (visit?.id) {
-          savePendingPhotosToStorage(visit.id, updated);
-        }
-        return updated;
+  // Para lojas sem indústrias configuradas
+  async function pickImagesNoIndustry() {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permissão necessária', 'É necessário permitir o acesso à galeria');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        quality: 0.8,
+        selectionLimit: 20,
       });
-      setTempPhoto(null);
+
+      if (!result.canceled && result.assets.length > 0) {
+        const newPhotos: VisitPhoto[] = result.assets.map(asset => ({
+          uri: asset.uri,
+          type: 'OTHER' as const,
+        }));
+
+        setPhotos((prev) => {
+          const updated = [...prev, ...newPhotos];
+          if (visit?.id) savePendingPhotosToStorage(visit.id, updated);
+          return updated;
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao selecionar imagens:', error);
+      Alert.alert('Erro', 'Não foi possível selecionar as imagens');
     }
-    setShowIndustryModal(false);
-    setPhotoForIndustrySelection(null);
   }
 
-  // Função para cancelar seleção de indústria (descarta a foto)
-  function handleCancelIndustrySelection() {
-    setTempPhoto(null);
-    setShowIndustryModal(false);
-    setPhotoForIndustrySelection(null);
+  async function takePhotoNoIndustry() {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permissão necessária', 'É necessário permitir o acesso à câmera');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const newPhoto: VisitPhoto = {
+          uri: result.assets[0].uri,
+          type: 'OTHER',
+        };
+
+        setPhotos((prev) => {
+          const updated = [...prev, newPhoto];
+          if (visit?.id) savePendingPhotosToStorage(visit.id, updated);
+          return updated;
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao capturar foto:', error);
+      Alert.alert('Erro', 'Não foi possível capturar a foto');
+    }
   }
 
-  // Função para obter o código da indústria pelo ID
-  function getIndustryById(industryId: string) {
-    return industries.find(i => i.id === industryId);
+  function removePhoto(index: number) {
+    Alert.alert(
+      'Remover foto',
+      'Deseja remover esta foto?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Remover',
+          style: 'destructive',
+          onPress: () => {
+            setPhotos((prev) => {
+              const updated = prev.filter((_, i) => i !== index);
+              if (visit?.id) savePendingPhotosToStorage(visit.id, updated);
+              return updated;
+            });
+          },
+        },
+      ]
+    );
   }
 
-  // Cores para badges de indústria (baseado no código)
+  function toggleIndustry(industryId: string) {
+    setExpandedIndustries(prev => {
+      const next = new Set(prev);
+      if (next.has(industryId)) {
+        next.delete(industryId);
+      } else {
+        next.add(industryId);
+      }
+      return next;
+    });
+  }
+
   function getIndustryColor(code: string): string {
-    const colors: Record<string, string> = {
+    const colorMap: Record<string, string> = {
       'A': '#FF6B6B', 'B': '#4ECDC4', 'C': '#45B7D1', 'D': '#96CEB4',
       'E': '#FFEAA7', 'F': '#DDA0DD', 'G': '#98D8C8', 'H': '#F7DC6F',
       'I': '#BB8FCE', 'J': '#85C1E9', 'K': '#F8B500', 'L': '#00CED1',
       'M': '#FF69B4', 'N': '#32CD32', 'O': '#FFD700', 'P': '#FF4500',
     };
     const firstChar = (code || 'A').charAt(0).toUpperCase();
-    return colors[firstChar] || '#6C63FF';
+    return colorMap[firstChar] || '#6C63FF';
+  }
+
+  function getPhotosForIndustry(industryId: string): VisitPhoto[] {
+    return photos.filter(p => p.industryId === industryId);
+  }
+
+  function getPhotosWithoutIndustry(): VisitPhoto[] {
+    return photos.filter(p => !p.industryId);
+  }
+
+  function getGlobalPhotoIndex(industryId: string | null, localIndex: number): number {
+    let count = 0;
+    for (const p of photos) {
+      if (industryId ? p.industryId === industryId : !p.industryId) {
+        if (localIndex === 0) return count;
+        localIndex--;
+      }
+      count++;
+    }
+    return -1;
   }
 
   async function uploadPhotos() {
@@ -285,9 +429,8 @@ export default function ActiveVisitScreen({ route }: any) {
 
     setUploading(true);
     try {
-      // Solicitar permissão de localização
       const permission = await requestForegroundPermissions();
-      
+
       if (permission.status !== 'granted') {
         Alert.alert(
           'Permissão necessária',
@@ -299,26 +442,13 @@ export default function ActiveVisitScreen({ route }: any) {
         );
         return;
       }
-      
-      // Obter localização atual
+
       const location = await getCurrentPosition();
 
-      // Filtrar apenas fotos novas (que têm uri e ainda não foram enviadas)
       const photosToUpload = photos.filter((photo) => {
         const hasUri = photo.uri && photo.uri.startsWith('file://');
-        const alreadyUploaded = photo.url && !photo.uri; // Já tem URL mas não tem URI = já foi enviada
+        const alreadyUploaded = photo.url && !photo.uri;
         return hasUri && !alreadyUploaded;
-      });
-
-      console.log('📸 [ActiveVisit] Total de fotos:', photos.length);
-      console.log('📸 [ActiveVisit] Fotos para upload:', photosToUpload.length);
-      photosToUpload.forEach((photo, index) => {
-        console.log(`📸 [ActiveVisit] Foto ${index + 1}:`, {
-          hasUri: !!photo.uri,
-          uri: photo.uri?.substring(0, 50),
-          type: photo.type,
-          hasUrl: !!photo.url,
-        });
       });
 
       if (photosToUpload.length === 0) {
@@ -327,170 +457,80 @@ export default function ActiveVisitScreen({ route }: any) {
         return;
       }
 
-      // Upload de cada foto
-      const uploadPromises = photosToUpload.map(async (photo) => {
+      const uploadResults: { photo: VisitPhoto; url: string; success: boolean }[] = [];
+
+      for (const photo of photosToUpload) {
         try {
-          console.log('📸 [ActiveVisit] Iniciando upload de foto adicional...');
-          console.log('📸 [ActiveVisit] Tipo:', photo.type || 'OTHER');
-          console.log('📸 [ActiveVisit] URI:', photo.uri?.substring(0, 50));
-          
-          // Obter presigned URL
           const { presignedUrl, url } = await photoService.getPresignedUrl({
             visitId: visit.id,
-            type: (photo.type || 'OTHER') as 'FACADE_CHECKIN' | 'FACADE_CHECKOUT' | 'OTHER',
+            type: 'OTHER',
             contentType: 'image/jpeg',
             extension: 'jpg',
           });
 
-          console.log('📸 [ActiveVisit] Presigned URL obtida:', presignedUrl ? 'Sim' : 'Não');
-          console.log('📸 [ActiveVisit] URL final:', url);
-
-          // Fazer upload para Firebase Storage
-          if (presignedUrl && photo.uri) {
-            console.log('📸 [ActiveVisit] Fazendo upload da foto para Firebase...');
-            console.log('📸 [ActiveVisit] Presigned URL (primeiros 150 chars):', presignedUrl.substring(0, 150));
-            console.log('📸 [ActiveVisit] Photo URI:', photo.uri);
-            
-            const uploadSuccess = await photoService.uploadToFirebase(presignedUrl, photo.uri, 'image/jpeg');
-            
-            if (!uploadSuccess) {
-              console.error('❌ [ActiveVisit] Upload da foto falhou - uploadSuccess retornou false');
-              console.error('❌ [ActiveVisit] NÃO será salvo no banco de dados');
-              throw new Error('Falha no upload da foto - upload retornou false');
-            }
-            
-            console.log('✅ [ActiveVisit] Upload da foto concluído com sucesso');
-            console.log('✅ [ActiveVisit] URL da foto que será salva:', url);
-            
-            // Verificar se a URL está correta antes de retornar
-            if (!url || url.includes('placeholder.com') || url.includes('mock-storage.local')) {
-              console.error('❌ [ActiveVisit] URL inválida gerada:', url);
-              throw new Error('URL inválida gerada pelo backend');
-            }
-          } else {
-            console.warn('⚠️ [ActiveVisit] Presigned URL ou photoUri não disponível');
-            console.warn('⚠️ [ActiveVisit] presignedUrl:', !!presignedUrl, 'photo.uri:', !!photo.uri);
+          if (!presignedUrl || !photo.uri) {
             throw new Error('Presigned URL ou photoUri não disponível');
           }
 
-          const photoData = {
-            url,
-            type: (photo.type || 'OTHER') as 'FACADE_CHECKIN' | 'FACADE_CHECKOUT' | 'OTHER',
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          };
+          const uploadSuccess = await photoService.uploadToFirebase(presignedUrl, photo.uri, 'image/jpeg');
+          if (!uploadSuccess) throw new Error('Upload retornou false');
 
-          // Se for foto OTHER e tiver indústria selecionada, associar após upload
-          if (photo.type === 'OTHER' && photo.industryId && visit.id) {
-            try {
-              // Aguardar um pouco para garantir que a foto foi salva no banco
-              setTimeout(async () => {
-                try {
-                  // Buscar a foto recém-criada pelo URL
-                  const visitData = await visitService.getCurrentVisit();
-                  const uploadedPhoto = visitData.visit.photos.find((p: any) => p.url === url);
-                  
-                  if (uploadedPhoto && photo.industryId) {
-                    await industryService.associatePhotoToIndustry({
-                      photoId: uploadedPhoto.id,
-                      industryId: photo.industryId,
-                      visitId: visit.id,
-                    });
-                    console.log('✅ [ActiveVisit] Foto associada à indústria:', photo.industryId);
-                  }
-                } catch (error) {
-                  console.error('❌ [ActiveVisit] Erro ao associar foto à indústria:', error);
-                }
-              }, 2000);
-            } catch (error) {
-              console.error('❌ [ActiveVisit] Erro ao agendar associação de indústria:', error);
-            }
-          }
-
-          return photoData;
+          uploadResults.push({ photo, url, success: true });
         } catch (error: any) {
-          console.error('❌ [ActiveVisit] Erro no upload da foto:', error);
-          console.error('❌ [ActiveVisit] Mensagem:', error?.message);
-          console.error('❌ [ActiveVisit] Stack:', error?.stack);
-          throw error;
+          console.error('❌ [ActiveVisit] Erro no upload:', error?.message);
+          uploadResults.push({ photo, url: '', success: false });
         }
-      });
-
-      // Executar uploads (permitir que alguns falhem sem parar todos)
-      const uploadResults = await Promise.allSettled(uploadPromises);
-      
-      const uploadedPhotos = uploadResults
-        .filter((result) => result.status === 'fulfilled')
-        .map((result) => (result as PromiseFulfilledResult<any>).value);
-      
-      const failedUploads = uploadResults.filter((result) => result.status === 'rejected');
-      
-      if (failedUploads.length > 0) {
-        console.error('❌ [ActiveVisit] ===== FOTOS QUE FALHARAM NO UPLOAD =====');
-        console.error('❌ [ActiveVisit] Total de falhas:', failedUploads.length);
-        failedUploads.forEach((result, index) => {
-          const reason = (result as PromiseRejectedResult).reason;
-          console.error(`❌ [ActiveVisit] Foto ${index + 1} falhou:`, {
-            message: reason?.message || String(reason),
-            error: reason,
-          });
-        });
-        console.error('❌ [ActiveVisit] ===========================================');
       }
 
-      if (uploadedPhotos.length === 0) {
+      const successResults = uploadResults.filter(r => r.success);
+      const failedCount = uploadResults.filter(r => !r.success).length;
+
+      if (successResults.length === 0) {
         Alert.alert('Erro', 'Nenhuma foto foi enviada com sucesso');
         setUploading(false);
         return;
       }
 
-      console.log('✅ [ActiveVisit] Fotos enviadas com sucesso:', uploadedPhotos.length);
-
-      // Registrar fotos no backend
       try {
         await visitService.uploadPhotos({
           visitId: visit.id,
-          photos: uploadedPhotos,
+          photos: successResults.map(r => ({
+            url: r.url,
+            type: 'OTHER' as const,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            industryId: r.photo.industryId,
+          })),
         });
-        console.log('✅ [ActiveVisit] Fotos registradas no backend');
-        
-        // Limpar fotos pendentes após upload bem-sucedido
+
         await clearPendingPhotos(visit.id);
-        
-        // Atualizar estado das fotos (remover URIs e manter apenas URLs)
-        setPhotos((prev) => {
-          return prev.map((photo) => {
-            // Se a foto foi enviada, remover URI e manter URL
-            const uploadedPhoto = uploadedPhotos.find(
-              (up) => up.url && prev.find((p) => p.uri === photo.uri)
-            );
-            if (uploadedPhoto) {
-              return {
-                ...photo,
-                url: uploadedPhoto.url,
-                uri: undefined, // Remover URI após upload
-              };
-            }
-            return photo;
-          });
+
+        const uriToUrl = new Map<string, string>();
+        successResults.forEach(r => {
+          if (r.photo.uri) uriToUrl.set(r.photo.uri, r.url);
         });
+
+        setPhotos((prev) =>
+          prev.map((p) => {
+            const newUrl = p.uri ? uriToUrl.get(p.uri) : undefined;
+            if (newUrl) {
+              return { ...p, url: newUrl, uri: undefined };
+            }
+            return p;
+          })
+        );
       } catch (error: any) {
         console.error('❌ [ActiveVisit] Erro ao registrar fotos no backend:', error);
-        Alert.alert('Aviso', `${uploadedPhotos.length} foto(s) foram enviadas, mas houve erro ao registrar no sistema`);
+        Alert.alert('Aviso', `${successResults.length} foto(s) enviadas, mas houve erro ao registrar`);
         setUploading(false);
         return;
       }
 
-      if (failedUploads.length > 0) {
-        Alert.alert(
-          'Sucesso parcial',
-          `${uploadedPhotos.length} foto(s) enviadas com sucesso. ${failedUploads.length} foto(s) falharam.`
-        );
+      if (failedCount > 0) {
+        Alert.alert('Sucesso parcial', `${successResults.length} foto(s) enviadas. ${failedCount} falharam.`);
       } else {
-        Alert.alert('Sucesso', `${uploadedPhotos.length} foto(s) enviadas com sucesso!`);
+        Alert.alert('Sucesso', `${successResults.length} foto(s) enviadas com sucesso!`);
       }
-      
-      await loadCurrentVisit();
     } catch (error: any) {
       Alert.alert('Erro', error.response?.data?.message || 'Erro ao enviar fotos');
     } finally {
@@ -506,16 +546,210 @@ export default function ActiveVisitScreen({ route }: any) {
     navigation.navigate('Checkout', { visit });
   }
 
-  if (!visit) {
+  // ---- Contadores ----
+  const totalPending = photos.filter(p => p.uri && !p.url).length;
+  const totalUploaded = photos.filter(p => p.url).length;
+
+  // ---- Render helpers ----
+
+  function renderPhotoGrid(industryPhotos: VisitPhoto[], industryId: string | null) {
+    if (industryPhotos.length === 0) {
+      return (
+        <View style={styles.emptyPhotos}>
+          <Text style={styles.emptyPhotosText}>Nenhuma foto adicionada</Text>
+        </View>
+      );
+    }
+
     return (
-      <View style={styles.container}>
-        <Text style={styles.text}>Nenhuma visita em andamento</Text>
+      <View style={styles.photoGrid}>
+        {industryPhotos.map((photo, localIdx) => {
+          const sourceUri = photo.uri || photo.url;
+          if (!sourceUri) return null;
+          const isPending = !!photo.uri && !photo.url;
+          const globalIdx = getGlobalPhotoIndex(industryId, localIdx);
+
+          return (
+            <TouchableOpacity
+              key={`photo-${industryId ?? 'none'}-${localIdx}-${photo.id ?? ''}`}
+              style={styles.photoThumbnailContainer}
+              onPress={() => setSelectedPhotoIndex(globalIdx)}
+              activeOpacity={0.8}
+            >
+              <Image source={{ uri: sourceUri }} style={styles.photoThumbnail as any} />
+              {isPending ? (
+                <View style={styles.pendingBadge}>
+                  <Text style={styles.pendingBadgeText}>Pendente</Text>
+                </View>
+              ) : (
+                <View style={styles.uploadedBadge}>
+                  <Text style={styles.uploadedBadgeText}>✓</Text>
+                </View>
+              )}
+              {isPending && (
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    removePhoto(globalIdx);
+                  }}
+                >
+                  <Text style={styles.deleteButtonText}>×</Text>
+                </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+          );
+        })}
       </View>
     );
   }
 
+  function renderIndustrySection(industry: Industry) {
+    const industryPhotos = getPhotosForIndustry(industry.id);
+    const isExpanded = expandedIndustries.has(industry.id);
+    const pendingCount = industryPhotos.filter(p => p.uri && !p.url).length;
+    const uploadedCount = industryPhotos.filter(p => p.url).length;
+
+    return (
+      <View key={industry.id} style={styles.industrySection}>
+        <TouchableOpacity
+          style={styles.industryHeader}
+          onPress={() => toggleIndustry(industry.id)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.industryHeaderLeft}>
+            <View style={[styles.industryBadge, { backgroundColor: getIndustryColor(industry.code) }]}>
+              <Text style={styles.industryBadgeText}>{industry.code}</Text>
+            </View>
+            <View style={styles.industryHeaderInfo}>
+              <Text style={styles.industryName}>{industry.name}</Text>
+              <Text style={styles.industryStats}>
+                {uploadedCount} enviada{uploadedCount !== 1 ? 's' : ''}
+                {pendingCount > 0 ? ` · ${pendingCount} pendente${pendingCount !== 1 ? 's' : ''}` : ''}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.expandIcon}>{isExpanded ? '▼' : '▶'}</Text>
+        </TouchableOpacity>
+
+        {isExpanded && (
+          <View style={styles.industryContent}>
+            {renderPhotoGrid(industryPhotos, industry.id)}
+            <View style={styles.industryActions}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.galleryButton]}
+                onPress={() => pickImagesForIndustry(industry.id)}
+              >
+                <Text style={styles.actionButtonText}>📁 Galeria</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.cameraButton]}
+                onPress={() => takePhotoForIndustry(industry.id)}
+              >
+                <Text style={styles.actionButtonText}>📷 Câmera</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // ---- Screens de loading/vazio ----
+
+  if (loadingVisit) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary[600]} />
+        <Text style={[styles.text, { marginTop: 16 }]}>Carregando visita...</Text>
+      </View>
+    );
+  }
+
+  if (!visit) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary[600]} />
+        <Text style={[styles.text, { marginTop: 16 }]}>Redirecionando para iniciar nova visita...</Text>
+      </View>
+    );
+  }
+
+  // ---- Onboarding: escolher indústrias nesta loja ----
+
+  if (needsOnboarding === true && industries.length > 0) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Indústrias nesta loja</Text>
+          <Text style={[styles.subtitle, { marginTop: 8 }]}>
+            Selecione as indústrias que você atende nesta loja (obrigatório no primeiro check-in).
+          </Text>
+        </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+          {industries.map((industry) => {
+            const isSelected = onboardingSelectedIds.has(industry.id);
+            return (
+              <TouchableOpacity
+                key={industry.id}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  padding: 14,
+                  marginBottom: 8,
+                  backgroundColor: isSelected ? colors.primary[100] : colors.dark.card,
+                  borderRadius: 12,
+                  borderWidth: 2,
+                  borderColor: isSelected ? colors.primary[600] : colors.dark.border,
+                }}
+                onPress={() => toggleOnboardingIndustry(industry.id)}
+                activeOpacity={0.7}
+              >
+                <View style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 6,
+                  borderWidth: 2,
+                  borderColor: isSelected ? colors.primary[600] : colors.dark.border,
+                  backgroundColor: isSelected ? colors.primary[600] : 'transparent',
+                  marginRight: 12,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}>
+                  {isSelected && <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold' }}>✓</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.industryName, { marginBottom: 2 }]} numberOfLines={2}>{industry.name}</Text>
+                  <Text style={styles.textTertiary}>Cód. {industry.code}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.dark.border }}>
+          <Button
+            variant="primary"
+            size="lg"
+            onPress={confirmOnboarding}
+            disabled={onboardingSelectedIds.size === 0 || onboardingSubmitting}
+            isLoading={onboardingSubmitting}
+            style={{ width: '100%' }}
+          >
+            Confirmar ({onboardingSelectedIds.size} selecionada{onboardingSelectedIds.size !== 1 ? 's' : ''})
+          </Button>
+          <Text style={[styles.textTertiary, { textAlign: 'center', marginTop: 8, fontSize: 12 }]}>
+            Selecione pelo menos uma indústria para continuar.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  // ---- Render principal ----
+
   return (
     <ScrollView style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Visita em Andamento</Text>
         <Text style={styles.storeName}>{visit.store?.name ?? 'Loja'}</Text>
@@ -525,185 +759,132 @@ export default function ActiveVisitScreen({ route }: any) {
         </Text>
       </View>
 
+      {/* Seção de Fotos */}
       <View style={styles.section}>
-        <View style={styles.photoHeader}>
+        <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Fotos do Trabalho</Text>
           <View style={styles.photoCounter}>
             <Text style={styles.photoCounterText}>
-              {photos.filter(p => p.uri && !p.url).length} pendentes / {photos.length} total
+              {totalPending > 0 ? `${totalPending} pendentes · ` : ''}{totalUploaded + totalPending} total
             </Text>
           </View>
         </View>
-        <View style={styles.photoGrid}>
-          {photos.map((photo, index) => {
-            const sourceUri = photo.uri || photo.url;
-            if (!sourceUri) {
-              return null;
-            }
-            const isPending = !!photo.uri && !photo.url;
-            const industry = photo.industryId ? getIndustryById(photo.industryId) : null;
-            return (
+
+        {industries.length > 0 ? (
+          // Com indústrias: mostrar seções agrupadas
+          <View>
+            {industries.map(industry => renderIndustrySection(industry))}
+          </View>
+        ) : (
+          // Sem indústrias: fluxo simples
+          <View>
+            {renderPhotoGrid(getPhotosWithoutIndustry(), null)}
+            <View style={styles.industryActions}>
               <TouchableOpacity
-                key={photo.id ?? sourceUri ?? index}
-                style={styles.photoThumbnailContainer}
-                onPress={() => setSelectedPhotoIndex(index)}
-                activeOpacity={0.8}
+                style={[styles.actionButton, styles.galleryButton]}
+                onPress={pickImagesNoIndustry}
               >
-                <Image
-                  source={{ uri: sourceUri }}
-                  style={styles.photoThumbnail as any}
-                />
-                {/* Badge da indústria */}
-                {industry && (
-                  <View style={[styles.industryBadgeSmall, { backgroundColor: getIndustryColor(industry.code) }]}>
-                    <Text style={styles.industryBadgeSmallText}>{industry.code}</Text>
-                  </View>
-                )}
-                {isPending && (
-                  <View style={styles.pendingBadge}>
-                    <Text style={styles.pendingBadgeText}>Pendente</Text>
-                  </View>
-                )}
-                {!isPending && (
-                  <View style={styles.uploadedBadge}>
-                    <Text style={styles.uploadedBadgeText}>✓</Text>
-                  </View>
-                )}
-                {isPending && (
-                  <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      Alert.alert(
-                        'Remover foto',
-                        'Deseja remover esta foto?',
-                        [
-                          { text: 'Cancelar', style: 'cancel' },
-                          {
-                            text: 'Remover',
-                            style: 'destructive',
-                            onPress: () => {
-                              setPhotos((prev) => prev.filter((_, i) => i !== index));
-                              if (visit?.id) {
-                                const updated = photos.filter((_, i) => i !== index);
-                                savePendingPhotosToStorage(visit.id, updated);
-                              }
-                            },
-                          },
-                        ]
-                      );
-                    }}
-                  >
-                    <Text style={styles.deleteButtonText}>×</Text>
-                  </TouchableOpacity>
-                )}
+                <Text style={styles.actionButtonText}>📁 Galeria</Text>
               </TouchableOpacity>
-            );
-          })}
-        </View>
-        <View style={styles.buttonRow}>
-          <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={pickImage}>
-            <Text style={styles.buttonText}>Galeria</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={takePhoto}>
-            <Text style={styles.buttonText}>Câmera</Text>
-          </TouchableOpacity>
-        </View>
-        {photos.length > 0 && (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.cameraButton]}
+                onPress={takePhotoNoIndustry}
+              >
+                <Text style={styles.actionButtonText}>📷 Câmera</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Botão Enviar */}
+        {totalPending > 0 && (
           <TouchableOpacity
-            style={[styles.button, styles.uploadButton]}
+            style={[styles.sendButton]}
             onPress={uploadPhotos}
             disabled={uploading}
           >
             {uploading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.buttonText}>Enviar Fotos</Text>
+              <Text style={styles.sendButtonText}>
+                Enviar {totalPending} foto{totalPending !== 1 ? 's' : ''}
+              </Text>
             )}
           </TouchableOpacity>
         )}
       </View>
 
+      {/* Pesquisa de Preços */}
       <View style={styles.section}>
-        <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={navigateToPriceResearch}>
-          <Text style={styles.buttonText}>Pesquisa de Preços</Text>
+        <TouchableOpacity style={[styles.navButton, styles.primaryButton]} onPress={navigateToPriceResearch}>
+          <Text style={styles.navButtonText}>Pesquisa de Preços</Text>
         </TouchableOpacity>
       </View>
 
+      {/* Sincronização */}
+      {(pendingPhotosCount > 0 || pendingSurveysCount > 0) && (
+        <View style={styles.section}>
+          <View style={styles.syncInfoContainer}>
+            <Text style={styles.syncInfoText}>
+              {pendingPhotosCount} foto(s) e {pendingSurveysCount} pesquisa(s) pendentes de sync
+            </Text>
+            <TouchableOpacity
+              style={[styles.navButton, styles.syncButton]}
+              onPress={async () => {
+                setSyncing(true);
+                try {
+                  await offlineSyncService.syncAll();
+                  Alert.alert('Sincronizado', 'Dados sincronizados com sucesso!');
+                } catch {
+                  Alert.alert('Erro', 'Falha ao sincronizar. Tente novamente mais tarde.');
+                } finally {
+                  setSyncing(false);
+                }
+              }}
+              disabled={syncing}
+            >
+              {syncing ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.navButtonText}>Sincronizar Agora</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Checkout */}
       <View style={styles.section}>
-        <TouchableOpacity style={[styles.button, styles.checkoutButton]} onPress={navigateToCheckout}>
-          <Text style={styles.buttonText}>Fazer Checkout</Text>
+        <TouchableOpacity style={[styles.navButton, styles.checkoutButton]} onPress={navigateToCheckout}>
+          <Text style={styles.navButtonText}>Fazer Checkout</Text>
         </TouchableOpacity>
       </View>
 
       {/* Modal de Preview Fullscreen */}
       {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
-        <View style={styles.fullscreenModal}>
-          <TouchableOpacity
-            style={styles.fullscreenBackdrop}
-            activeOpacity={1}
-            onPress={() => setSelectedPhotoIndex(null)}
-          >
-            <View style={styles.fullscreenContent}>
-              <TouchableOpacity
-                style={styles.fullscreenClose}
-                onPress={() => setSelectedPhotoIndex(null)}
-              >
-                <Text style={styles.fullscreenCloseText}>✕</Text>
-              </TouchableOpacity>
-              <Image
-                source={{ uri: photos[selectedPhotoIndex].uri || photos[selectedPhotoIndex].url }}
-                style={styles.fullscreenImage as any}
-                resizeMode="contain"
-              />
-            </View>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Modal de Seleção de Indústria com Preview */}
-      {showIndustryModal && tempPhoto && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Selecione a Indústria</Text>
-            
-            {/* Preview da foto */}
-            <View style={styles.photoPreviewContainer}>
-              <Image source={{ uri: tempPhoto }} style={styles.photoPreview as any} />
-            </View>
-            
-            <Text style={styles.modalSubtitle}>
-              Para qual indústria é esta foto?
-            </Text>
-            
-            <ScrollView style={styles.industriesList}>
-              {industries.map((industry) => (
-                <TouchableOpacity
-                  key={industry.id}
-                  style={styles.industryOption}
-                  onPress={() => handleIndustrySelect(industry.id)}
-                >
-                  <View style={[styles.industryBadge, { backgroundColor: getIndustryColor(industry.code) }]}>
-                    <Text style={styles.industryBadgeText}>{industry.code}</Text>
-                  </View>
-                  <View style={styles.industryTextContainer}>
-                    <Text style={styles.industryOptionText}>{industry.name}</Text>
-                    {industry.description && (
-                      <Text style={styles.industryDescription}>{industry.description}</Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            
+        <Modal visible transparent animationType="fade" onRequestClose={() => setSelectedPhotoIndex(null)}>
+          <View style={styles.fullscreenModal}>
             <TouchableOpacity
-              style={styles.modalCancelButton}
-              onPress={handleCancelIndustrySelection}
+              style={styles.fullscreenBackdrop}
+              activeOpacity={1}
+              onPress={() => setSelectedPhotoIndex(null)}
             >
-              <Text style={styles.modalCancelText}>Cancelar (descartar foto)</Text>
+              <View style={styles.fullscreenContent}>
+                <TouchableOpacity
+                  style={styles.fullscreenClose}
+                  onPress={() => setSelectedPhotoIndex(null)}
+                >
+                  <Text style={styles.fullscreenCloseText}>✕</Text>
+                </TouchableOpacity>
+                <Image
+                  source={{ uri: photos[selectedPhotoIndex].uri || photos[selectedPhotoIndex].url }}
+                  style={styles.fullscreenImage as any}
+                  resizeMode="contain"
+                />
+              </View>
             </TouchableOpacity>
           </View>
-        </View>
+        </Modal>
       )}
     </ScrollView>
   );
@@ -744,48 +925,151 @@ const styles = StyleSheet.create({
   },
   section: {
     backgroundColor: colors.dark.card,
-    padding: 20,
+    padding: 16,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: colors.dark.border,
     borderRadius: theme.borderRadius.lg,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 15,
-    color: colors.text.primary,
-  },
-  photoHeader: {
+  sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.primary,
   },
   photoCounter: {
     backgroundColor: colors.dark.cardElevated,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: colors.dark.border,
   },
   photoCounterText: {
-    fontSize: theme.typography.fontSize.sm,
+    fontSize: 12,
     color: colors.text.secondary,
-    fontWeight: theme.typography.fontWeight.medium,
+    fontWeight: '500',
   },
+  text: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 50,
+    color: colors.text.secondary,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+  textTertiary: {
+    fontSize: 12,
+    color: colors.text.tertiary,
+  },
+
+  // ---- Indústria section ----
+  industrySection: {
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.dark.border,
+    borderRadius: theme.borderRadius.lg,
+    overflow: 'hidden',
+  },
+  industryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    backgroundColor: colors.dark.cardElevated,
+  },
+  industryHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  industryBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  industryBadgeText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  industryHeaderInfo: {
+    flex: 1,
+  },
+  industryName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
+  industryStats: {
+    fontSize: 12,
+    color: colors.text.tertiary,
+    marginTop: 2,
+  },
+  expandIcon: {
+    fontSize: 14,
+    color: colors.text.tertiary,
+    marginLeft: 8,
+  },
+  industryContent: {
+    padding: 12,
+    backgroundColor: colors.dark.background,
+  },
+  industryActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  actionButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  galleryButton: {
+    backgroundColor: colors.primary[600],
+  },
+  cameraButton: {
+    backgroundColor: colors.success,
+  },
+  actionButtonText: {
+    color: colors.text.primary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  emptyPhotos: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  emptyPhotosText: {
+    color: colors.text.tertiary,
+    fontSize: 13,
+    fontStyle: 'italic',
+  },
+
+  // ---- Photo grid ----
   photoGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 15,
-    gap: 8,
+    gap: 6,
   },
   photoThumbnailContainer: {
     width: '31%',
     aspectRatio: 1,
     position: 'relative',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   photoThumbnail: {
     width: '100%',
@@ -807,7 +1091,7 @@ const styles = StyleSheet.create({
   pendingBadgeText: {
     fontSize: 10,
     color: colors.text.primary,
-    fontWeight: theme.typography.fontWeight.bold,
+    fontWeight: 'bold',
   },
   uploadedBadge: {
     position: 'absolute',
@@ -823,7 +1107,7 @@ const styles = StyleSheet.create({
   uploadedBadgeText: {
     fontSize: 12,
     color: colors.text.primary,
-    fontWeight: theme.typography.fontWeight.bold,
+    fontWeight: 'bold',
   },
   deleteButton: {
     position: 'absolute',
@@ -839,54 +1123,61 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     fontSize: 18,
     color: colors.text.primary,
-    fontWeight: theme.typography.fontWeight.bold,
+    fontWeight: 'bold',
     lineHeight: 18,
   },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 10,
+
+  // ---- Enviar / Nav buttons ----
+  sendButton: {
+    backgroundColor: colors.accent[500],
+    padding: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 16,
   },
-  button: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
+  sendButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  navButton: {
+    padding: 14,
+    borderRadius: 10,
     alignItems: 'center',
   },
-  primaryButton: {
-    backgroundColor: colors.primary[600],
-  },
-  secondaryButton: {
-    backgroundColor: colors.success,
-  },
-  uploadButton: {
-    backgroundColor: colors.accent[500],
-  },
-  checkoutButton: {
-    backgroundColor: colors.error,
-  },
-  buttonText: {
+  navButtonText: {
     color: colors.text.primary,
     fontSize: 16,
     fontWeight: '600',
   },
-  text: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 50,
-    color: colors.text.secondary,
+  primaryButton: {
+    backgroundColor: colors.primary[600],
   },
+  syncButton: {
+    backgroundColor: colors.primary[600],
+    marginTop: 8,
+  },
+  checkoutButton: {
+    backgroundColor: colors.error,
+  },
+  syncInfoContainer: {
+    alignItems: 'center',
+  },
+  syncInfoText: {
+    fontSize: 14,
+    color: colors.warning || '#f59e0b',
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+
+  // ---- Fullscreen preview ----
   fullscreenModal: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 1000,
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
   },
   fullscreenBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -918,124 +1209,4 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  modalContent: {
-    backgroundColor: colors.dark.card,
-    borderRadius: 12,
-    padding: 20,
-    width: '90%',
-    maxHeight: '80%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: colors.text.primary,
-    marginBottom: 8,
-  },
-  modalSubtitle: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    marginBottom: 16,
-  },
-  industriesList: {
-    maxHeight: 300,
-    marginBottom: 16,
-  },
-  industryOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    backgroundColor: colors.dark.background,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  industryOptionSelected: {
-    borderColor: colors.primary[600],
-    backgroundColor: colors.primary[600] + '20',
-  },
-  industryOptionText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text.primary,
-  },
-  industryOptionCode: {
-    fontSize: 12,
-    color: colors.text.secondary,
-    fontFamily: 'monospace',
-  },
-  modalCancelButton: {
-    padding: 12,
-    alignItems: 'center',
-    borderRadius: 8,
-    backgroundColor: colors.error + '30',
-    borderWidth: 1,
-    borderColor: colors.error,
-  },
-  modalCancelText: {
-    fontSize: 16,
-    color: colors.error,
-    fontWeight: '600',
-  },
-  // Estilos para preview da foto no modal
-  photoPreviewContainer: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  photoPreview: {
-    width: 150,
-    height: 150,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: colors.dark.border,
-  },
-  // Estilos para badges de indústria
-  industryBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  industryBadgeText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  industryTextContainer: {
-    flex: 1,
-  },
-  industryDescription: {
-    fontSize: 12,
-    color: colors.text.tertiary,
-    marginTop: 2,
-  },
-  industryBadgeSmall: {
-    position: 'absolute',
-    bottom: 4,
-    left: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    minWidth: 28,
-    alignItems: 'center',
-  },
-  industryBadgeSmallText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
 });
-

@@ -9,6 +9,7 @@ import {
   getVisits,
   getDailySummary,
   getVisitCoverage,
+  getVisitIndustries,
 } from '../controllers/promoter.controller';
 import { authenticate } from '../middleware/auth';
 
@@ -24,6 +25,7 @@ router.post('/price-research', submitPriceResearch);
 router.get('/current-visit', getCurrentVisit);
 router.get('/daily-summary', getDailySummary);
 router.get('/visits/:visitId/coverage', getVisitCoverage);
+router.get('/visits/:visitId/industries', getVisitIndustries);
 
 export default router;
 

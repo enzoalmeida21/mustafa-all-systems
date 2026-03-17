@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -8,7 +8,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   rightIcon?: React.ReactNode;
 }
 
-export default function Input({
+const Input = forwardRef<HTMLInputElement, InputProps>(function Input({
   label,
   error,
   helperText,
@@ -16,7 +16,7 @@ export default function Input({
   rightIcon,
   className = '',
   ...props
-}: InputProps) {
+}, ref) {
   const baseStyles =
     'w-full px-4 py-2.5 border rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-0 bg-dark-card text-text-primary placeholder-text-tertiary';
   
@@ -42,6 +42,7 @@ export default function Input({
           </div>
         )}
         <input
+          ref={ref}
           className={`${baseStyles} ${inputStyles} ${
             leftIcon ? 'pl-10' : ''
           } ${rightIcon ? 'pr-10' : ''} ${className}`}
@@ -76,5 +77,7 @@ export default function Input({
       )}
     </div>
   );
-}
+});
+
+export default Input;
 

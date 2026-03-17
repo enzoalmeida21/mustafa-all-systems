@@ -13,6 +13,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { visitService } from '../services/visitService';
 import { photoService } from '../services/photoService';
+import { useVisitFlow } from '../features/visits';
+import { useAuth } from '../context/AuthContext';
 import { colors, theme } from '../styles/theme';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -33,6 +35,8 @@ type RootStackParamList = {
 export default function CheckInScreen({ route }: any) {
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const { store } = route.params || {};
+  const { user } = useAuth();
+  const { startVisit, setCheckedIn } = useVisitFlow();
   const [locationPermission, setLocationPermission] = useState<boolean>(false);
   const [location, setLocation] = useState<LocationObject | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,7 +95,7 @@ export default function CheckInScreen({ route }: any) {
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.8,
         allowsEditing: false,
       });
@@ -124,21 +128,21 @@ export default function CheckInScreen({ route }: any) {
 
     setLoading(true);
     try {
-      console.log('📸 [CheckIn] Iniciando processo de check-in...');
-      console.log('📸 [CheckIn] Store ID:', store.id);
-      console.log('📸 [CheckIn] Location:', location.coords);
-      console.log('📸 [CheckIn] Photo URI:', photoUri);
+      // Persistir localmente antes de chamar o backend
+      await startVisit({
+        storeId: store.id,
+        storeName: store.name,
+        storeAddress: store.address,
+        promoterId: user?.id || 'unknown',
+      });
 
-      // 1. Fazer check-in primeiro para obter visitId real
-      // Usaremos uma URL temporária que será substituída
-      console.log('📸 [CheckIn] Criando visita para obter visitId...');
       const tempPhotoUrl = 'https://placeholder.com/checkin.jpg';
       
       const checkInResult = await visitService.checkIn({
         storeId: store.id,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
-        photoUrl: tempPhotoUrl, // Temporária, será substituída
+        photoUrl: tempPhotoUrl,
       });
 
       const visitId = checkInResult.visit?.id;
@@ -146,7 +150,8 @@ export default function CheckInScreen({ route }: any) {
         throw new Error('Não foi possível obter o ID da visita');
       }
 
-      console.log('✅ [CheckIn] Visita criada, visitId:', visitId);
+      // Transição local: visitInProgress -> checkedIn
+      await setCheckedIn(visitId, location.coords.latitude, location.coords.longitude);
 
       // 2. Agora que temos o visitId real, fazer upload da foto
       console.log('📸 [CheckIn] Obtendo presigned URL com visitId real...');

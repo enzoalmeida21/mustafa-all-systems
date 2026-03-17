@@ -13,6 +13,7 @@ datasource db {
 enum UserRole {
   PROMOTER
   SUPERVISOR
+  INDUSTRY_OWNER
   ADMIN
 }
 
@@ -27,8 +28,9 @@ model User {
   email     String   @unique
   name      String
   password  String
-  phone     String?  // Celular do promotor (opcional)
+  phone     String?
   role      UserRole
+  state     String?  // UF: "SP", "RJ", etc.
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -40,16 +42,27 @@ model User {
   photoIndustries       PhotoIndustry[]
   informationDistributions InformationDistribution[]
   whatsappReports       WhatsAppReport[]
+  supervisorRegions     SupervisorRegion[]
+  promoterSupervisors   PromoterSupervisor[] @relation("PromoterSupervisors")
+  supervisorPromoters   PromoterSupervisor[] @relation("SupervisorPromoters")
+  supervisedRoutes      RouteAssignment[]    @relation("SupervisedRoutes")
+
+  @@index([state])
 }
 
 model Store {
   id        String   @id @default(uuid())
   name      String
+  code      String?  @unique
   address   String
-  latitude  Float
-  longitude Float
+  state     String?
+  latitude  Float    @default(0)
+  longitude Float    @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([state])
+  @@index([code])
 
   // Relations
   visits                Visit[]
@@ -173,6 +186,7 @@ model RouteAssignment {
   id            String   @id @default(uuid())
   promoterId    String
   storeId       String
+  supervisorId  String?
   order         Int      @default(0) // Ordem de visita sugerida
   expectedHours Float?   // Horas esperadas por semana/mês
   isActive      Boolean  @default(true)
@@ -180,23 +194,26 @@ model RouteAssignment {
   updatedAt     DateTime @updatedAt
 
   // Relations
-  promoter User  @relation(fields: [promoterId], references: [id], onDelete: Cascade)
-  store    Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  promoter   User  @relation(fields: [promoterId], references: [id], onDelete: Cascade)
+  store      Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  supervisor User? @relation("SupervisedRoutes", fields: [supervisorId], references: [id])
 
   @@unique([promoterId, storeId])
   @@index([promoterId])
   @@index([storeId])
+  @@index([supervisorId])
   @@index([isActive])
 }
 
 model Industry {
-  id          String   @id @default(uuid())
-  name        String
-  code        String   @unique // Código único da indústria
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(uuid())
+  name          String
+  code          String   @unique // Código único da indústria
+  abbreviation  String?  // ex: ROS, DOB, SAL
+  description   String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Relations
   products            Product[]
@@ -363,5 +380,30 @@ model StoreIndustry {
   @@index([storeId])
   @@index([industryId])
   @@index([isActive])
+}
+
+model SupervisorRegion {
+  id           String @id @default(uuid())
+  supervisorId String
+  state        String
+
+  supervisor User @relation(fields: [supervisorId], references: [id], onDelete: Cascade)
+
+  @@unique([supervisorId, state])
+  @@index([supervisorId])
+  @@index([state])
+}
+
+model PromoterSupervisor {
+  id           String @id @default(uuid())
+  promoterId   String
+  supervisorId String
+
+  promoter   User @relation("PromoterSupervisors", fields: [promoterId], references: [id], onDelete: Cascade)
+  supervisor User @relation("SupervisorPromoters", fields: [supervisorId], references: [id], onDelete: Cascade)
+
+  @@unique([promoterId, supervisorId])
+  @@index([promoterId])
+  @@index([supervisorId])
 }
 

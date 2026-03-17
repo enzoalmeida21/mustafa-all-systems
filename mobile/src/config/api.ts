@@ -1,12 +1,11 @@
 // Configuração da API
-// URL padrão para produção: https://promo-gestao-backend.onrender.com/api
-// Em desenvolvimento local, use .env com EXPO_PUBLIC_API_URL
+// Em produção (GCP): defina EXPO_PUBLIC_API_URL com a URL do Cloud Run (ex.: https://sua-api.run.app/api).
+// Ver docs/DEPLOY_GCP_FIREBASE.md. Fallback abaixo para compatibilidade (ex.: Render).
 
-// Prioridade: 1. process.env (desenvolvimento), 2. URL de produção (padrão)
-const API_URL = 
-  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_URL) 
-    ? process.env.EXPO_PUBLIC_API_URL 
-    : 'https://promo-gestao-backend.onrender.com/api'; // URL de produção como padrão
+const API_URL =
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_URL)
+    ? process.env.EXPO_PUBLIC_API_URL
+    : 'https://promo-gestao-backend.onrender.com/api';
 
 // Log da URL configurada (apenas em desenvolvimento)
 if (typeof __DEV__ !== 'undefined' && __DEV__) {

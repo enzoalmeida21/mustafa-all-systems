@@ -6,6 +6,8 @@ var UserRole;
 (function (UserRole) {
     UserRole["PROMOTER"] = "PROMOTER";
     UserRole["SUPERVISOR"] = "SUPERVISOR";
+    UserRole["INDUSTRY_OWNER"] = "INDUSTRY_OWNER";
+    UserRole["ADMIN"] = "ADMIN";
 })(UserRole || (exports.UserRole = UserRole = {}));
 // Photo types
 var PhotoType;
