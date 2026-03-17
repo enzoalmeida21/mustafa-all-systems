@@ -42,6 +42,7 @@ export interface UploadPhotosRequest {
     type: 'FACADE_CHECKIN' | 'FACADE_CHECKOUT' | 'OTHER';
     latitude?: number;
     longitude?: number;
+    industryId?: string;
   }>;
 }
 

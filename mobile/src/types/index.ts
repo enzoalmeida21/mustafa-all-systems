@@ -4,6 +4,7 @@
 export enum UserRole {
   PROMOTER = 'PROMOTER',
   SUPERVISOR = 'SUPERVISOR',
+  INDUSTRY_OWNER = 'INDUSTRY_OWNER',
   ADMIN = 'ADMIN',
 }
 

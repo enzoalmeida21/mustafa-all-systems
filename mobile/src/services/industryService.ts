@@ -89,6 +89,29 @@ export const industryService = {
   },
 
   /**
+   * Indústrias da visita: retorna industries + needsOnboarding (true se promotor ainda não escolheu para esta loja).
+   */
+  async getVisitIndustries(visitId: string): Promise<{
+    visitId: string;
+    storeId: string;
+    needsOnboarding: boolean;
+    industries: Industry[];
+  }> {
+    const response = await apiClient.get(`/promoters/visits/${visitId}/industries`);
+    return response.data;
+  },
+
+  /**
+   * Definir indústrias que o promotor atende nesta loja (onboarding).
+   */
+  async setMyStoreIndustries(storeId: string, industryIds: string[]): Promise<{ industries: Industry[] }> {
+    const response = await apiClient.post(`/industry-assignments/me/store/${storeId}`, {
+      industryIds,
+    });
+    return response.data;
+  },
+
+  /**
    * Verificar cobertura de indústrias em uma visita
    */
   async getVisitCoverage(visitId: string): Promise<CoverageResponse> {

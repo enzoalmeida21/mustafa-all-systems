@@ -40,6 +40,27 @@ export async function checkIn(req: AuthRequest, res: Response) {
       return res.status(404).json({ message: 'Loja não encontrada' });
     }
 
+    // Não permitir nova visita na mesma loja no mesmo dia (já fez checkout hoje)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+
+    const alreadyDoneToday = await prisma.visit.findFirst({
+      where: {
+        promoterId,
+        storeId,
+        checkOutAt: { not: null },
+        checkInAt: { gte: todayStart, lt: todayEnd },
+      },
+    });
+
+    if (alreadyDoneToday) {
+      return res.status(400).json({
+        message: 'Você já realizou visita nesta loja hoje. Não é possível fazer nova visita no mesmo dia.',
+      });
+    }
+
     // Criar visita
     const visit = await prisma.visit.create({
       data: {
@@ -168,6 +189,7 @@ const uploadPhotosSchema = z.object({
       type: z.nativeEnum(PhotoType),
       latitude: z.number().optional(),
       longitude: z.number().optional(),
+      industryId: z.string().uuid().optional(),
     })
   ),
 });
@@ -176,6 +198,10 @@ export async function uploadPhotos(req: AuthRequest, res: Response) {
   try {
     const { visitId, photos } = uploadPhotosSchema.parse(req.body);
     const promoterId = req.userId!;
+
+    console.log(`📸 [uploadPhotos] visitId=${visitId}, ${photos.length} foto(s), coords:`, 
+      photos.map(p => ({ type: p.type, lat: p.latitude, lng: p.longitude, industryId: p.industryId }))
+    );
 
     // Verificar se a visita existe e pertence ao promotor
     const visit = await prisma.visit.findFirst({
@@ -209,8 +235,8 @@ export async function uploadPhotos(req: AuthRequest, res: Response) {
               where: { id: existingPhoto.id },
               data: {
                 url: photo.url,
-                latitude: photo.latitude || existingPhoto.latitude,
-                longitude: photo.longitude || existingPhoto.longitude,
+                latitude: photo.latitude ?? existingPhoto.latitude,
+                longitude: photo.longitude ?? existingPhoto.longitude,
               },
             });
             console.log(`✅ Foto ${photo.type} atualizada: ${existingPhoto.url} -> ${photo.url}`);
@@ -218,17 +244,35 @@ export async function uploadPhotos(req: AuthRequest, res: Response) {
           }
         }
         
-        // Para fotos OTHER ou se não existe foto de check-in/checkout, criar nova
         const created = await prisma.photo.create({
           data: {
             visitId,
             url: photo.url,
             type: photo.type,
-            latitude: photo.latitude || null,
-            longitude: photo.longitude || null,
+            latitude: photo.latitude ?? null,
+            longitude: photo.longitude ?? null,
+            selectedIndustryId: photo.industryId ?? null,
           },
         });
         console.log(`✅ Nova foto ${photo.type} criada: ${photo.url}`);
+
+        if (photo.industryId && created.id) {
+          try {
+            await prisma.photoIndustry.create({
+              data: {
+                photoId: created.id,
+                industryId: photo.industryId,
+                promoterId,
+                storeId: visit.storeId,
+                visitId,
+              },
+            });
+            console.log(`✅ Foto associada à indústria ${photo.industryId}`);
+          } catch (assocError) {
+            console.warn('⚠️ Erro ao associar foto à indústria:', assocError);
+          }
+        }
+
         return created;
       })
     );
@@ -323,6 +367,21 @@ export async function getStores(req: AuthRequest, res: Response) {
   try {
     const promoterId = req.userId!;
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+
+    const completedToday = await prisma.visit.findMany({
+      where: {
+        promoterId,
+        checkOutAt: { not: null },
+        checkInAt: { gte: todayStart, lt: todayEnd },
+      },
+      select: { storeId: true },
+    });
+    const completedStoreIdsToday = [...new Set(completedToday.map((v: { storeId: string }) => v.storeId))];
+
     // Buscar lojas atribuídas ao promotor (rota configurada)
     const routeAssignments = await prisma.routeAssignment.findMany({
       where: {
@@ -342,6 +401,7 @@ export async function getStores(req: AuthRequest, res: Response) {
       return res.json({
         stores: routeAssignments.map((a: { store: any }) => a.store),
         hasRoute: true,
+        completedStoreIdsToday,
       });
     }
 
@@ -352,7 +412,7 @@ export async function getStores(req: AuthRequest, res: Response) {
       },
     });
 
-    res.json({ stores, hasRoute: false });
+    res.json({ stores, hasRoute: false, completedStoreIdsToday });
   } catch (error) {
     console.error('Get stores error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -372,13 +432,14 @@ export async function getCurrentVisit(req: AuthRequest, res: Response) {
       include: {
         store: true,
         photos: {
+          include: {
+            photoIndustries: {
+              select: { industryId: true },
+            },
+          },
           orderBy: [
-            {
-              type: 'asc',
-            },
-            {
-              createdAt: 'asc',
-            },
+            { type: 'asc' },
+            { createdAt: 'asc' },
           ],
         },
       },
@@ -398,7 +459,18 @@ export async function getCurrentVisit(req: AuthRequest, res: Response) {
         checkInAt: visit.checkInAt,
         checkInLatitude: visit.checkInLatitude,
         checkInLongitude: visit.checkInLongitude,
-        photos: visit.photos,
+        photos: visit.photos.map((photo: any) => ({
+          id: photo.id,
+          url: photo.url,
+          type: photo.type,
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+          createdAt: photo.createdAt,
+          industryId: photo.selectedIndustryId
+            || (photo.photoIndustries && photo.photoIndustries.length > 0
+              ? photo.photoIndustries[0].industryId
+              : null),
+        })),
       },
     });
   } catch (error) {
@@ -546,7 +618,72 @@ export async function getDailySummary(req: AuthRequest, res: Response) {
 }
 
 /**
- * Verificar cobertura de indústrias em uma visita
+ * Indústrias da visita: se o promotor já tem IndustryAssignment para esta loja, retorna essas + needsOnboarding false; senão retorna StoreIndustry + needsOnboarding true.
+ * GET /promoters/visits/:visitId/industries
+ */
+export async function getVisitIndustries(req: AuthRequest, res: Response) {
+  try {
+    const { visitId } = req.params;
+    const promoterId = req.userId!;
+
+    const visit = await prisma.visit.findUnique({
+      where: { id: visitId },
+      include: {
+        store: {
+          include: {
+            storeIndustries: {
+              where: { isActive: true },
+              include: { industry: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!visit) {
+      return res.status(404).json({ message: 'Visita não encontrada' });
+    }
+    if (visit.promoterId !== promoterId) {
+      return res.status(403).json({ message: 'Acesso não autorizado' });
+    }
+
+    const storeId = visit.storeId;
+    const assignments = await prisma.industryAssignment.findMany({
+      where: {
+        promoterId,
+        storeId,
+        isActive: true,
+      },
+      include: { industry: true },
+      orderBy: { industry: { name: 'asc' } },
+    });
+
+    if (assignments.length > 0) {
+      return res.json({
+        visitId: visit.id,
+        storeId,
+        needsOnboarding: false,
+        industries: assignments.map(a => a.industry),
+      });
+    }
+
+    const storeIndustries = visit.store.storeIndustries;
+    const industries = storeIndustries.map(si => si.industry);
+    return res.json({
+      visitId: visit.id,
+      storeId,
+      needsOnboarding: true,
+      industries,
+    });
+  } catch (error) {
+    console.error('Get visit industries error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Verificar cobertura de indústrias em uma visita.
+ * Usa IndustryAssignment (promoter+store) como "required" quando existir; senão StoreIndustry.
  * GET /promoters/visits/:visitId/coverage
  */
 export async function getVisitCoverage(req: AuthRequest, res: Response) {
@@ -554,7 +691,6 @@ export async function getVisitCoverage(req: AuthRequest, res: Response) {
     const { visitId } = req.params;
     const promoterId = req.userId;
 
-    // Buscar visita com loja e indústrias da loja
     const visit = await prisma.visit.findUnique({
       where: { id: visitId },
       include: {
@@ -576,33 +712,46 @@ export async function getVisitCoverage(req: AuthRequest, res: Response) {
       return res.status(404).json({ message: 'Visita não encontrada' });
     }
 
-    // Verificar se a visita pertence ao promotor (se não for admin/supervisor)
     if (promoterId && visit.promoterId !== promoterId) {
-      // Verificar se é admin ou supervisor
       const user = await prisma.user.findUnique({
         where: { id: promoterId },
         select: { role: true },
       });
-      
       if (user?.role === 'PROMOTER') {
         return res.status(403).json({ message: 'Acesso não autorizado' });
       }
     }
 
-    // Buscar fotos da visita com indústria (via PhotoIndustry)
     const photosWithIndustry = await prisma.photoIndustry.findMany({
       where: { visitId },
       select: { industryId: true },
     });
-
     const coveredIds = new Set(photosWithIndustry.map(p => p.industryId));
 
-    // Calcular cobertura
-    const requiredIndustries = visit.store.storeIndustries;
-    const coverage = requiredIndustries.map(si => ({
-      industry: si.industry,
-      covered: coveredIds.has(si.industryId),
-      photoCount: photosWithIndustry.filter(p => p.industryId === si.industryId).length,
+    // Required: IndustryAssignment (promoter + store) se existir; senão StoreIndustry
+    let requiredList: { industryId: string; industry: any }[];
+    const assignments = await prisma.industryAssignment.findMany({
+      where: {
+        promoterId: visit.promoterId,
+        storeId: visit.storeId,
+        isActive: true,
+      },
+      include: { industry: true },
+    });
+
+    if (assignments.length > 0) {
+      requiredList = assignments.map(a => ({ industryId: a.industryId, industry: a.industry }));
+    } else {
+      requiredList = visit.store.storeIndustries.map(si => ({
+        industryId: si.industryId,
+        industry: si.industry,
+      }));
+    }
+
+    const coverage = requiredList.map(({ industryId, industry }) => ({
+      industry,
+      covered: coveredIds.has(industryId),
+      photoCount: photosWithIndustry.filter(p => p.industryId === industryId).length,
     }));
 
     const pending = coverage.filter(c => !c.covered);
@@ -617,10 +766,10 @@ export async function getVisitCoverage(req: AuthRequest, res: Response) {
       pending,
       covered,
       isComplete: pending.length === 0,
-      totalRequired: requiredIndustries.length,
+      totalRequired: requiredList.length,
       totalCovered: covered.length,
-      percentComplete: requiredIndustries.length > 0 
-        ? Math.round((covered.length / requiredIndustries.length) * 100) 
+      percentComplete: requiredList.length > 0
+        ? Math.round((covered.length / requiredList.length) * 100)
         : 100,
     });
   } catch (error) {

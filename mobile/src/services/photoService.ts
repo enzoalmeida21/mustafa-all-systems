@@ -1,5 +1,5 @@
 import axios from 'axios';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiConfig from '../config/api';
 

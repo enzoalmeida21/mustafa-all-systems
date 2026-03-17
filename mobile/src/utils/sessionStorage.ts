@@ -5,6 +5,7 @@ export interface PendingPhoto {
   uri: string;
   type: 'FACADE_CHECKIN' | 'FACADE_CHECKOUT' | 'OTHER';
   visitId: string;
+  industryId?: string;
   timestamp: number;
 }
 

@@ -23,6 +23,7 @@ export default function StoresScreen() {
   const navigation = useNavigation<StoresNavigation>();
   const [stores, setStores] = useState<Store[]>([]);
   const [filteredStores, setFilteredStores] = useState<Store[]>([]);
+  const [completedStoreIdsToday, setCompletedStoreIdsToday] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [checkingIn, setCheckingIn] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,9 +48,10 @@ export default function StoresScreen() {
   async function loadStores() {
     try {
       setLoading(true);
-      const storesList = await storeService.getStores();
-      setStores(storesList);
-      setFilteredStores(storesList);
+      const response = await storeService.getStores();
+      setStores(response.stores);
+      setFilteredStores(response.stores);
+      setCompletedStoreIdsToday(response.completedStoreIdsToday || []);
     } catch (error) {
       console.error('Erro ao carregar lojas:', error);
       Alert.alert('Erro', 'Não foi possível carregar as lojas');
@@ -59,6 +61,10 @@ export default function StoresScreen() {
   }
 
   async function handleCheckIn(store: Store) {
+    if (completedStoreIdsToday.includes(store.id)) {
+      Alert.alert('Loja já visitada', 'Você já realizou visita nesta loja hoje. Não é possível fazer nova visita no mesmo dia.');
+      return;
+    }
     try {
       setCheckingIn(store.id);
 
@@ -130,33 +136,43 @@ export default function StoresScreen() {
         data={filteredStores}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item, index }) => (
-          <Card
-            key={item.id}
-            style={[styles.storeCard, { marginTop: index === 0 ? 0 : theme.spacing.md }]}
-            shadow
-          >
-            <View style={styles.storeHeader}>
-              <View style={styles.storeIcon}>
-                <Text style={styles.storeIconText}>🏪</Text>
-              </View>
-              <View style={styles.storeInfo}>
-                <Text style={styles.storeName}>{item.name}</Text>
-                <Text style={styles.storeAddress}>{item.address}</Text>
-              </View>
-            </View>
-            <Button
-              variant="primary"
-              size="md"
-              onPress={() => handleCheckIn(item)}
-              isLoading={checkingIn === item.id}
-              disabled={checkingIn !== null}
-              style={styles.checkInButton}
+        renderItem={({ item, index }) => {
+          const alreadyVisitedToday = completedStoreIdsToday.includes(item.id);
+          return (
+            <Card
+              key={item.id}
+              style={[
+                styles.storeCard,
+                { marginTop: index === 0 ? 0 : theme.spacing.md },
+                alreadyVisitedToday && styles.storeCardDone,
+              ]}
+              shadow
             >
-              Fazer Check-in
-            </Button>
-          </Card>
-        )}
+              <View style={styles.storeHeader}>
+                <View style={[styles.storeIcon, alreadyVisitedToday && styles.storeIconDone]}>
+                  <Text style={styles.storeIconText}>🏪</Text>
+                </View>
+                <View style={styles.storeInfo}>
+                  <Text style={styles.storeName}>{item.name}</Text>
+                  <Text style={styles.storeAddress}>{item.address}</Text>
+                  {alreadyVisitedToday && (
+                    <Text style={styles.alreadyVisitedLabel}>Já visitada hoje</Text>
+                  )}
+                </View>
+              </View>
+              <Button
+                variant="primary"
+                size="md"
+                onPress={() => handleCheckIn(item)}
+                isLoading={checkingIn === item.id}
+                disabled={checkingIn !== null || alreadyVisitedToday}
+                style={styles.checkInButton}
+              >
+                {alreadyVisitedToday ? 'Já visitada hoje' : 'Fazer Check-in'}
+              </Button>
+            </Card>
+          );
+        }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>🔍</Text>
@@ -236,6 +252,10 @@ const styles = StyleSheet.create({
   storeCard: {
     marginBottom: theme.spacing.md,
   },
+  storeCardDone: {
+    opacity: 0.85,
+    borderColor: colors.dark.borderLight,
+  },
   storeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -255,6 +275,10 @@ const styles = StyleSheet.create({
   storeIconText: {
     fontSize: 24,
   },
+  storeIconDone: {
+    backgroundColor: colors.gray[700],
+    borderColor: colors.dark.border,
+  },
   storeInfo: {
     flex: 1,
   },
@@ -267,6 +291,12 @@ const styles = StyleSheet.create({
   storeAddress: {
     fontSize: theme.typography.fontSize.sm,
     color: colors.text.secondary,
+  },
+  alreadyVisitedLabel: {
+    fontSize: theme.typography.fontSize.xs,
+    color: colors.primary[400],
+    marginTop: theme.spacing.xs,
+    fontWeight: theme.typography.fontWeight.medium,
   },
   checkInButton: {
     width: '100%',

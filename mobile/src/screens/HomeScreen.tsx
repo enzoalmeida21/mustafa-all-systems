@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { visitService } from '../services/visitService';
+import { useVisitFlow } from '../features/visits';
+import { offlineSyncService } from '../services/offlineSyncService';
 import { colors, theme } from '../styles/theme';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -21,7 +23,8 @@ interface DailySummary {
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeNavigation>();
-  const [hasActiveVisit, setHasActiveVisit] = useState(false);
+  const { visit: localVisit, isActiveVisit, pendingPhotosCount, pendingSurveysCount, clearVisit } = useVisitFlow();
+  const [hasActiveVisit, setHasActiveVisit] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [dailySummary, setDailySummary] = useState<DailySummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
@@ -29,11 +32,12 @@ export default function HomeScreen() {
   useEffect(() => {
     checkActiveVisit();
     loadDailySummary();
+    offlineSyncService.syncAll().catch(() => {});
     
-    // Atualizar ao voltar para a tela
     const unsubscribe = navigation.addListener('focus', () => {
       checkActiveVisit();
       loadDailySummary();
+      offlineSyncService.syncAll().catch(() => {});
     });
     
     return unsubscribe;
@@ -43,16 +47,24 @@ export default function HomeScreen() {
     try {
       setLoading(true);
       const response = await visitService.getCurrentVisit();
-      setHasActiveVisit(!!response.visit);
-    } catch (error: any) {
-      // Erros de rede são esperados quando o servidor não está disponível
-      // Não logar como erro crítico, apenas como aviso
-      if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
-        console.log('ℹ️ Servidor não disponível, assumindo nenhuma visita ativa');
+      if (response.visit) {
+        setHasActiveVisit(true);
       } else {
-        console.warn('⚠️ Erro ao verificar visita ativa:', error?.message || error);
+        setHasActiveVisit(false);
+        try {
+          await clearVisit();
+        } catch (_) {}
       }
-      setHasActiveVisit(false);
+    } catch (error: any) {
+      if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
+        setHasActiveVisit(isActiveVisit);
+      } else {
+        console.warn('[HomeScreen] Erro ao verificar visita ativa:', error?.message || error);
+        setHasActiveVisit(false);
+        try {
+          await clearVisit();
+        } catch (_) {}
+      }
     } finally {
       setLoading(false);
     }
@@ -80,7 +92,7 @@ export default function HomeScreen() {
     navigation.navigate('ActiveVisit');
   }
 
-  if (loading) {
+  if (loading || hasActiveVisit === null) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color={colors.primary[600]} />
@@ -123,17 +135,36 @@ export default function HomeScreen() {
         </View>
       </Card>
 
-      {/* Action Button */}
+      {/* Action Button - só mostra Continuar se o backend confirmar visita ativa */}
       <View style={styles.actionContainer}>
-        {hasActiveVisit ? (
-          <Button
-            variant="accent"
-            size="lg"
-            onPress={handleContinueVisit}
-            style={styles.actionButton}
-          >
-            Continuar Visita
-          </Button>
+        {hasActiveVisit === true ? (
+          <>
+            {localVisit && (
+              <Card style={styles.activeVisitInfo} shadow>
+                <Text style={styles.activeVisitStoreName}>{localVisit.storeName}</Text>
+                <Text style={styles.activeVisitStatus}>
+                  {localVisit.status === 'checkedIn' || localVisit.status === 'working'
+                    ? 'Trabalhando na loja'
+                    : localVisit.status === 'storeCompleted'
+                    ? 'Loja concluída - faça checkout'
+                    : 'Visita em andamento'}
+                </Text>
+                {(pendingPhotosCount > 0 || pendingSurveysCount > 0) && (
+                  <Text style={styles.pendingSyncText}>
+                    {pendingPhotosCount} foto(s) e {pendingSurveysCount} pesquisa(s) pendentes de sync
+                  </Text>
+                )}
+              </Card>
+            )}
+            <Button
+              variant="accent"
+              size="lg"
+              onPress={handleContinueVisit}
+              style={styles.actionButton}
+            >
+              Continuar Visita
+            </Button>
+          </>
         ) : (
           <Button
             variant="primary"
@@ -254,9 +285,31 @@ const styles = StyleSheet.create({
   },
   actionContainer: {
     marginBottom: theme.spacing.xl,
+    gap: theme.spacing.md,
   },
   actionButton: {
     width: '100%',
+  },
+  activeVisitInfo: {
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+  },
+  activeVisitStoreName: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: colors.text.primary,
+    marginBottom: theme.spacing.xs,
+  },
+  activeVisitStatus: {
+    fontSize: theme.typography.fontSize.sm,
+    color: colors.primary[400],
+    fontWeight: theme.typography.fontWeight.medium,
+  },
+  pendingSyncText: {
+    fontSize: theme.typography.fontSize.xs,
+    color: colors.warning || '#f59e0b',
+    marginTop: theme.spacing.xs,
+    fontWeight: theme.typography.fontWeight.medium,
   },
   summaryCard: {
     marginTop: theme.spacing.lg,

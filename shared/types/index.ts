@@ -2,7 +2,19 @@
 export enum UserRole {
   PROMOTER = 'PROMOTER',
   SUPERVISOR = 'SUPERVISOR',
+  INDUSTRY_OWNER = 'INDUSTRY_OWNER',
+  ADMIN = 'ADMIN',
 }
+
+export type VisitStatusType =
+  | 'idle'
+  | 'visitInProgress'
+  | 'checkedIn'
+  | 'working'
+  | 'storeCompleted'
+  | 'checkedOut';
+
+export type SyncStatusType = 'pending' | 'uploading' | 'synced' | 'error';
 
 export interface User {
   id: string;
@@ -119,5 +131,104 @@ export interface ExportJob {
   progress: number;
   downloadUrl: string | null;
   createdAt: Date;
+}
+
+// ── Firestore Document Models ──
+// These types define the canonical shape of documents stored in Firestore.
+// Both backend (when syncing) and web (when reading) should use these types.
+
+/**
+ * Firestore: promoters/{promoterId}
+ */
+export interface FirestorePromoterDoc {
+  name: string;
+  email: string;
+  role: UserRole;
+  regions: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Firestore: stores/{storeId}
+ */
+export interface FirestoreStoreDoc {
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  region: string;
+  industryIds: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Firestore: industries/{industryId}
+ */
+export interface FirestoreIndustryDoc {
+  name: string;
+  code: string;
+  description: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Firestore: visits/{visitId}
+ * visitId = promoterId_storeId_YYYY-MM-DD
+ */
+export interface FirestoreVisitDoc {
+  promoterId: string;
+  storeId: string;
+  storeName: string;
+  date: string; // YYYY-MM-DD
+  status: VisitStatusType;
+  region: string;
+  checkinAt: string | null;
+  checkoutAt: string | null;
+  checkinLatitude: number | null;
+  checkinLongitude: number | null;
+  checkoutLatitude: number | null;
+  checkoutLongitude: number | null;
+  checkinPhotoUrl: string | null;
+  checkoutPhotoUrl: string | null;
+  totalPhotos: number;
+  totalPriceSurveys: number;
+  hasPendingSync: boolean;
+  hoursWorked: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Firestore: visits/{visitId}/photos/{photoId}
+ */
+export interface FirestorePhotoDoc {
+  industryId: string | null;
+  storagePath: string;
+  downloadUrl: string;
+  hash: string | null;
+  type: 'FACADE_CHECKIN' | 'FACADE_CHECKOUT' | 'OTHER';
+  latitude: number | null;
+  longitude: number | null;
+  deviceCreatedAt: string;
+  createdAt: string;
+}
+
+/**
+ * Firestore: visits/{visitId}/priceSurveys/{surveyId}
+ */
+export interface FirestorePriceSurveyDoc {
+  industryId: string | null;
+  storeId: string;
+  productName: string;
+  price: number;
+  competitorPrices: CompetitorPrice[];
+  deviceCreatedAt: string;
+  createdAt: string;
 }
 

@@ -158,6 +158,7 @@ const createUserSchema = z.object({
   name: z.string().min(1),
   password: z.string().min(6),
   role: z.nativeEnum(UserRole),
+  state: z.string().length(2).optional(),
 });
 
 const updateUserSchema = z.object({
@@ -166,6 +167,7 @@ const updateUserSchema = z.object({
   password: z.string().min(6).optional(),
   role: z.nativeEnum(UserRole).optional(),
   phone: z.string().optional(),
+  state: z.string().length(2).optional().nullable(),
 });
 
 /**
@@ -180,6 +182,7 @@ export async function listUsers(req: AuthRequest, res: Response) {
         name: true,
         phone: true,
         role: true,
+        state: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -214,7 +217,6 @@ export async function createUser(req: AuthRequest, res: Response) {
     // Hash da senha
     const hashedPassword = await hashPassword(data.password);
 
-    // Criar usuário
     const user = await prisma.user.create({
       data: {
         email: data.email,
@@ -222,6 +224,7 @@ export async function createUser(req: AuthRequest, res: Response) {
         password: hashedPassword,
         role: data.role,
         phone: data.phone || null,
+        state: data.state?.toUpperCase() || null,
       },
       select: {
         id: true,
@@ -229,6 +232,7 @@ export async function createUser(req: AuthRequest, res: Response) {
         phone: true,
         name: true,
         role: true,
+        state: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -272,17 +276,16 @@ export async function updateUser(req: AuthRequest, res: Response) {
       }
     }
 
-    // Preparar dados para atualização
     const updateData: any = {};
     if (data.email) updateData.email = data.email;
     if (data.name) updateData.name = data.name;
     if (data.role) updateData.role = data.role;
     if (data.phone !== undefined) updateData.phone = data.phone || null;
+    if (data.state !== undefined) updateData.state = data.state?.toUpperCase() || null;
     if (data.password) {
       updateData.password = await hashPassword(data.password);
     }
 
-    // Atualizar usuário
     const user = await prisma.user.update({
       where: { id },
       data: updateData,
@@ -292,6 +295,7 @@ export async function updateUser(req: AuthRequest, res: Response) {
         name: true,
         phone: true,
         role: true,
+        state: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -355,8 +359,12 @@ export async function getUser(req: AuthRequest, res: Response) {
         name: true,
         phone: true,
         role: true,
+        state: true,
         createdAt: true,
         updatedAt: true,
+        supervisorRegions: {
+          select: { state: true },
+        },
       },
     });
 
@@ -367,6 +375,129 @@ export async function getUser(req: AuthRequest, res: Response) {
     res.json({ user });
   } catch (error) {
     console.error('Get user error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Atribuir estados a um supervisor
+ */
+export async function setSupervisorRegions(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+    const { states } = z.object({ states: z.array(z.string().length(2)) }).parse(req.body);
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user || user.role !== UserRole.SUPERVISOR) {
+      return res.status(400).json({ message: 'Usuário não é um supervisor' });
+    }
+
+    await prisma.$transaction([
+      prisma.supervisorRegion.deleteMany({ where: { supervisorId: id } }),
+      ...states.map(state =>
+        prisma.supervisorRegion.create({
+          data: { supervisorId: id, state: state.toUpperCase() },
+        })
+      ),
+    ]);
+
+    const regions = await prisma.supervisorRegion.findMany({
+      where: { supervisorId: id },
+      select: { state: true },
+    });
+
+    res.json({ states: regions.map(r => r.state) });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: 'Dados inválidos', errors: error.errors });
+    }
+    console.error('Set supervisor regions error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Listar estados de um supervisor
+ */
+export async function getSupervisorRegions(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+
+    const regions = await prisma.supervisorRegion.findMany({
+      where: { supervisorId: id },
+      select: { state: true },
+    });
+
+    res.json({ states: regions.map(r => r.state) });
+  } catch (error) {
+    console.error('Get supervisor regions error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Atribuir supervisores a um promotor
+ */
+export async function setPromoterSupervisors(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+    const { supervisorIds } = z.object({
+      supervisorIds: z.array(z.string().uuid()),
+    }).parse(req.body);
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user || user.role !== UserRole.PROMOTER) {
+      return res.status(400).json({ message: 'Usuário não é um promotor' });
+    }
+
+    if (supervisorIds.length > 0) {
+      const supervisors = await prisma.user.findMany({
+        where: { id: { in: supervisorIds }, role: UserRole.SUPERVISOR },
+      });
+      if (supervisors.length !== supervisorIds.length) {
+        return res.status(400).json({ message: 'Um ou mais supervisores inválidos' });
+      }
+    }
+
+    await prisma.$transaction([
+      prisma.promoterSupervisor.deleteMany({ where: { promoterId: id } }),
+      ...supervisorIds.map(supervisorId =>
+        prisma.promoterSupervisor.create({
+          data: { promoterId: id, supervisorId },
+        })
+      ),
+    ]);
+
+    const result = await prisma.promoterSupervisor.findMany({
+      where: { promoterId: id },
+      include: { supervisor: { select: { id: true, name: true, email: true } } },
+    });
+
+    res.json({ supervisors: result.map(r => r.supervisor) });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: 'Dados inválidos', errors: error.errors });
+    }
+    console.error('Set promoter supervisors error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Listar supervisores de um promotor
+ */
+export async function getPromoterSupervisors(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+
+    const result = await prisma.promoterSupervisor.findMany({
+      where: { promoterId: id },
+      include: { supervisor: { select: { id: true, name: true, email: true } } },
+    });
+
+    res.json({ supervisors: result.map(r => r.supervisor) });
+  } catch (error) {
+    console.error('Get promoter supervisors error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 }

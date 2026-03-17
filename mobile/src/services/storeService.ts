@@ -29,14 +29,24 @@ export interface Store {
   longitude: number;
 }
 
+export interface GetStoresResponse {
+  stores: Store[];
+  hasRoute?: boolean;
+  completedStoreIdsToday?: string[];
+}
+
 export const storeService = {
-  async getStores(): Promise<Store[]> {
+  async getStores(): Promise<GetStoresResponse> {
     try {
-      const response = await apiClient.get('/promoters/stores');
-      return response.data.stores || [];
+      const response = await apiClient.get<GetStoresResponse>('/promoters/stores');
+      return {
+        stores: response.data.stores || [],
+        hasRoute: response.data.hasRoute,
+        completedStoreIdsToday: response.data.completedStoreIdsToday || [],
+      };
     } catch (error) {
       console.error('Erro ao buscar lojas:', error);
-      return [];
+      return { stores: [], completedStoreIdsToday: [] };
     }
   },
 };

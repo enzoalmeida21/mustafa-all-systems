@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import type { ComponentType } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+
+const RouterOutlet = Outlet as ComponentType;
 
 // Ícones SVG com cores da marca
 const DashboardIcon = ({ active }: { active: boolean }) => (
@@ -182,18 +185,17 @@ export default function Layout() {
     </svg>
   );
 
-  // ADMIN vê todas as funcionalidades (supervisor + admin)
   const isAdmin = user?.role === 'ADMIN';
   const isSupervisor = user?.role === 'SUPERVISOR';
+  const isIndustryOwner = user?.role === 'INDUSTRY_OWNER';
   const isSupervisorOrAdmin = isSupervisor || isAdmin;
 
   const navigation = [
-    { name: 'Dashboard', path: '/', icon: DashboardIcon },
-    // Dashboard e Relatórios para Supervisor e Admin
+    ...(isSupervisorOrAdmin ? [{ name: 'Dashboard', path: '/', icon: DashboardIcon }] : []),
+    ...(isIndustryOwner ? [{ name: 'Minha Industria', path: '/industry-dashboard', icon: DashboardIcon }] : []),
     ...(isSupervisorOrAdmin
       ? [{ name: 'Relatórios', path: '/reports', icon: ReportsIcon }]
       : []),
-    // Configuração de rotas e gestão avançada apenas para Admin
     ...(isAdmin
       ? [
           { name: 'Gerenciar Lojas', path: '/stores', icon: StoresIcon },
@@ -350,7 +352,7 @@ export default function Layout() {
 
         {/* Page Content */}
         <main className="p-6 bg-dark-background min-h-screen">
-          <Outlet />
+          <RouterOutlet />
         </main>
       </div>
 

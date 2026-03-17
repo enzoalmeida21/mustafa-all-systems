@@ -5,7 +5,11 @@ interface Photo {
   id?: string;
   url: string;
   type?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   createdAt?: string | Date;
+  industryName?: string | null;
+  industryAbbreviation?: string | null;
 }
 
 interface PhotoGalleryProps {
@@ -16,6 +20,7 @@ interface PhotoGalleryProps {
   onClose: () => void;
   visitDate?: string;
   storeName?: string;
+  promoterName?: string;
 }
 
 // Função para validar se uma string é uma URL válida
@@ -95,6 +100,7 @@ export default function PhotoGallery({
   onClose,
   visitDate,
   storeName,
+  promoterName,
 }: PhotoGalleryProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
@@ -102,48 +108,50 @@ export default function PhotoGallery({
   const [isCheckInOutOpen, setIsCheckInOutOpen] = useState(false);
 
   // Filtrar apenas fotos do trabalho (OTHER) - excluir check-in/checkout
-  const allPhotos: Array<{ url: string; label: string; type?: string; createdAt?: string | Date }> = useMemo(() => {
-    const result: Array<{ url: string; label: string; type?: string; createdAt?: string | Date }> = [];
+  const allPhotos: Array<{
+    url: string;
+    label: string;
+    type?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    createdAt?: string | Date;
+    industryLabel: string;
+  }> = useMemo(() => {
+    const result: Array<{
+      url: string;
+      label: string;
+      type?: string;
+      latitude?: number | null;
+      longitude?: number | null;
+      createdAt?: string | Date;
+      industryLabel: string;
+    }> = [];
 
-    // Processar apenas fotos do trabalho (tipo OTHER)
     photos.forEach((photo, index) => {
-      // Filtrar apenas fotos OTHER (trabalho realizado)
-      if (photo.type !== 'OTHER' && photo.type !== undefined) {
-        return; // Pular check-in e checkout
-      }
-
-      // Verificar se não é check-in ou checkout por URL
-      if (photo.url === checkInPhotoUrl || photo.url === checkOutPhotoUrl) {
-        return; // Pular se for check-in ou checkout
-      }
+      if (photo.type !== 'OTHER' && photo.type !== undefined) return;
+      if (photo.url === checkInPhotoUrl || photo.url === checkOutPhotoUrl) return;
 
       const normalizedUrl = normalizeUrl(photo.url);
-      if (normalizedUrl && isValidUrl(normalizedUrl)) {
-        // Verificar se não é uma URL temporária/placeholder
-        if (!normalizedUrl.includes('placeholder.com') && 
-            !normalizedUrl.includes('mock-storage.local')) {
-          result.push({
-            url: normalizedUrl,
-            label: 'Foto da Visita',
-            type: 'OTHER',
-            createdAt: photo.createdAt,
-          });
-        } else {
-          console.warn(`[PhotoGallery] Foto ${index} filtrada (placeholder):`, photo);
-        }
-      } else {
-        console.warn(`[PhotoGallery] Foto ${index} com URL inválida:`, photo);
+      if (normalizedUrl && isValidUrl(normalizedUrl) && !normalizedUrl.includes('placeholder.com') && !normalizedUrl.includes('mock-storage.local')) {
+        const industryLabel = photo.industryAbbreviation || photo.industryName || '—';
+        result.push({
+          url: normalizedUrl,
+          label: 'Foto da Visita',
+          type: 'OTHER',
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+          createdAt: photo.createdAt,
+          industryLabel,
+        });
       }
     });
 
-    // Ordenar fotos do trabalho por data de criação (mais antiga primeiro)
     result.sort((a, b) => {
       const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return aDate - bDate;
     });
 
-    console.log('[PhotoGallery] Fotos do trabalho encontradas:', result.length);
     return result;
   }, [photos, checkInPhotoUrl, checkOutPhotoUrl]);
 
@@ -300,8 +308,22 @@ export default function PhotoGallery({
                   });
                 }}
               />
-              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-dark-card/90 px-4 py-2 rounded-lg border border-dark-border">
-                <span className="text-sm font-medium text-text-primary">{currentPhoto.label}</span>
+              <div className="absolute bottom-0 left-0 right-0 bg-black/75 px-3 py-2 text-xs text-white flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5">
+                <span><span className="text-white/70">Indústria:</span> {currentPhoto.industryLabel}</span>
+                <span><span className="text-white/70">Loja:</span> {storeName || '—'}</span>
+                <span><span className="text-white/70">Promotor:</span> {promoterName || '—'}</span>
+                <span><span className="text-white/70">Envio:</span> {currentPhoto.createdAt ? new Date(currentPhoto.createdAt).toLocaleString('pt-BR') : '—'}</span>
+                {currentPhoto.latitude != null && currentPhoto.longitude != null && (
+                  <a
+                    href={`https://www.google.com/maps?q=${currentPhoto.latitude},${currentPhoto.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary-300 hover:text-primary-200 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Ver no mapa
+                  </a>
+                )}
               </div>
             </div>
           </div>

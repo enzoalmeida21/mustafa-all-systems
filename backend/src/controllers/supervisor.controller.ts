@@ -242,33 +242,35 @@ export async function getPromoterVisits(req: AuthRequest, res: Response) {
       return res.status(404).json({ message: 'Promotor não encontrado' });
     }
 
-    // Buscar visitas
+    // Buscar visitas com promotor e fotos (com indústria para etiquetas)
     const [visits, total] = await Promise.all([
       prisma.visit.findMany({
         where: { promoterId: id },
         include: {
+          promoter: { select: { name: true } },
           store: true,
           photos: {
-            orderBy: {
-              createdAt: 'asc',
+            orderBy: { createdAt: 'asc' },
+            include: {
+              photoIndustries: {
+                take: 1,
+                include: { industry: { select: { name: true, abbreviation: true } } },
+              },
             },
           },
         },
-        orderBy: {
-          checkInAt: 'desc',
-        },
+        orderBy: { checkInAt: 'desc' },
         skip,
         take: limitNum,
       }),
-      prisma.visit.count({
-        where: { promoterId: id },
-      }),
+      prisma.visit.count({ where: { promoterId: id } }),
     ]);
 
     res.json({
       visits: visits.map((visit: any) => ({
         id: visit.id,
         store: visit.store,
+        promoterName: visit.promoter?.name ?? null,
         checkInAt: visit.checkInAt,
         checkOutAt: visit.checkOutAt,
         checkInLatitude: visit.checkInLatitude,
@@ -280,7 +282,19 @@ export async function getPromoterVisits(req: AuthRequest, res: Response) {
         hoursWorked: visit.checkOutAt
           ? ((visit.checkOutAt.getTime() - visit.checkInAt.getTime()) / (1000 * 60 * 60)).toFixed(2)
           : null,
-        photos: visit.photos,
+        photos: visit.photos.map((p: any) => {
+          const industry = p.photoIndustries?.[0]?.industry;
+          return {
+            id: p.id,
+            url: p.url,
+            type: p.type,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            createdAt: p.createdAt,
+            industryName: industry?.name ?? null,
+            industryAbbreviation: industry?.abbreviation ?? null,
+          };
+        }),
         photoCount: visit.photos.length,
       })),
       pagination: {
@@ -803,6 +817,260 @@ export async function getPendingIndustries(req: AuthRequest, res: Response) {
     }
   } catch (error) {
     console.error('Get pending industries error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Retorna os estados dos promotores vinculados ao supervisor
+ */
+export async function getMyStates(req: AuthRequest, res: Response) {
+  try {
+    const supervisorId = req.userId!;
+
+    const stateSet = new Set<string>();
+
+    // 1. Estados dos promotores vinculados via PromoterSupervisor
+    const promoters = await prisma.user.findMany({
+      where: {
+        role: UserRole.PROMOTER,
+        promoterSupervisors: { some: { supervisorId } },
+        state: { not: null },
+      },
+      select: { state: true },
+      distinct: ['state'],
+    });
+    promoters.forEach(p => { if (p.state) stateSet.add(p.state); });
+
+    // 2. Estados das lojas atribuídas com supervisorId direto
+    const routeStores = await prisma.routeAssignment.findMany({
+      where: { supervisorId, isActive: true },
+      select: { store: { select: { state: true } } },
+    });
+    routeStores.forEach(ra => { if (ra.store.state) stateSet.add(ra.store.state); });
+
+    // 3. Fallback: SupervisorRegion
+    if (stateSet.size === 0) {
+      const regions = await prisma.supervisorRegion.findMany({
+        where: { supervisorId },
+        select: { state: true },
+        orderBy: { state: 'asc' },
+      });
+      return res.json({ states: regions.map(r => r.state) });
+    }
+
+    res.json({ states: Array.from(stateSet).sort() });
+  } catch (error) {
+    console.error('Get my states error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Retorna promotores com status de pendencia para um estado
+ */
+export async function getPendingOverview(req: AuthRequest, res: Response) {
+  try {
+    const supervisorId = req.userId!;
+    const { state } = req.query;
+
+    // Promotor aparece se tem PromoterSupervisor OU routeAssignment com supervisorId
+    const whereClause: any = {
+      role: UserRole.PROMOTER,
+      OR: [
+        { promoterSupervisors: { some: { supervisorId } } },
+        { routeAssignments: { some: { supervisorId, isActive: true } } },
+      ],
+    };
+
+    if (state) {
+      whereClause.state = String(state).toUpperCase();
+    }
+
+    const promoters = await prisma.user.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        state: true,
+        routeAssignments: {
+          where: { isActive: true },
+          select: {
+            supervisorId: true,
+            store: {
+              select: {
+                id: true,
+                name: true,
+                state: true,
+                storeIndustries: {
+                  where: { isActive: true },
+                  select: {
+                    industry: {
+                      select: { id: true, name: true, code: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // Para cada promotor, verificar fotos enviadas por industria na visita mais recente de cada loja
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const result = await Promise.all(
+      promoters.map(async (promoter) => {
+        // Filtrar route assignments: mostrar se supervisorId == eu OU se supervisorId == null
+        const relevantAssignments = promoter.routeAssignments.filter(
+          ra => ra.supervisorId === supervisorId || ra.supervisorId === null
+        );
+
+        const stores = await Promise.all(
+          relevantAssignments.map(async (ra) => {
+            const store = ra.store;
+            // Se o promotor tem IndustryAssignment nesta loja, usar essas indústrias; senão StoreIndustry
+            const promoterStoreAssignments = await prisma.industryAssignment.findMany({
+              where: {
+                promoterId: promoter.id,
+                storeId: store.id,
+                isActive: true,
+              },
+              include: { industry: true },
+            });
+            const requiredIndustries =
+              promoterStoreAssignments.length > 0
+                ? promoterStoreAssignments.map(a => a.industry)
+                : store.storeIndustries.map(si => si.industry);
+
+            if (requiredIndustries.length === 0) {
+              return {
+                id: store.id,
+                name: store.name,
+                industries: [],
+                totalRequired: 0,
+                totalCovered: 0,
+              };
+            }
+
+            // Buscar visita mais recente deste promotor nesta loja
+            const latestVisit = await prisma.visit.findFirst({
+              where: {
+                promoterId: promoter.id,
+                storeId: store.id,
+              },
+              orderBy: { checkInAt: 'desc' },
+              select: {
+                id: true,
+                checkInAt: true,
+                checkOutAt: true,
+                photos: {
+                  where: { type: 'OTHER' },
+                  select: { selectedIndustryId: true },
+                },
+              },
+            });
+
+            const coveredIndustryIds = new Set(
+              (latestVisit?.photos || [])
+                .map(p => p.selectedIndustryId)
+                .filter(Boolean)
+            );
+
+            const industries = requiredIndustries.map(ind => ({
+              id: ind.id,
+              name: ind.name,
+              code: ind.code,
+              hasCoverage: coveredIndustryIds.has(ind.id),
+              photoCount: (latestVisit?.photos || []).filter(
+                p => p.selectedIndustryId === ind.id
+              ).length,
+            }));
+
+            return {
+              id: store.id,
+              name: store.name,
+              lastVisitAt: latestVisit?.checkInAt || null,
+              lastVisitCompleted: !!latestVisit?.checkOutAt,
+              industries,
+              totalRequired: requiredIndustries.length,
+              totalCovered: industries.filter(i => i.hasCoverage).length,
+            };
+          })
+        );
+
+        const totalRequired = stores.reduce((sum, s) => sum + s.totalRequired, 0);
+        const totalCovered = stores.reduce((sum, s) => sum + s.totalCovered, 0);
+        const isPending = totalRequired > 0 && totalCovered < totalRequired;
+
+        return {
+          id: promoter.id,
+          name: promoter.name,
+          email: promoter.email,
+          state: promoter.state,
+          stores,
+          totalRequired,
+          totalCovered,
+          isPending,
+        };
+      })
+    );
+
+    // Ordenar: pendentes primeiro
+    result.sort((a, b) => {
+      if (a.isPending && !b.isPending) return -1;
+      if (!a.isPending && b.isPending) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const summary = {
+      total: result.length,
+      pending: result.filter(p => p.isPending).length,
+      complete: result.filter(p => !p.isPending).length,
+    };
+
+    res.json({ state: state || null, promoters: result, summary });
+  } catch (error) {
+    console.error('Get pending overview error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * Retorna promotores vinculados ao supervisor via PromoterSupervisor
+ */
+export async function getScopedPromoters(req: AuthRequest, res: Response) {
+  try {
+    const isAdmin = req.userRole === UserRole.ADMIN;
+    const supervisorId = req.userId!;
+
+    const where: any = { role: UserRole.PROMOTER };
+    if (!isAdmin) {
+      where.OR = [
+        { promoterSupervisors: { some: { supervisorId } } },
+        { routeAssignments: { some: { supervisorId, isActive: true } } },
+      ];
+    }
+
+    const promoters = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        state: true,
+        createdAt: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json({ promoters });
+  } catch (error) {
+    console.error('Get scoped promoters error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 }

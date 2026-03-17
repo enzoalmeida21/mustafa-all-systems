@@ -99,6 +99,51 @@ async function main() {
 
   console.log('✅ Stores created:', stores.map(s => s.name));
 
+  // 11 indústrias (code + abbreviation) – upsert por code
+  const industriesData = [
+    { code: '55673', name: 'ROSATEX DO DORDESTE PROD SANEANTES LTDA', abbreviation: 'ROS' },
+    { code: '266', name: 'DOBRASIL IND DE ARTEFATOS DE PLAST LTDA', abbreviation: 'DOB' },
+    { code: '5963', name: 'ALUKENT EMBALAGENS LTDA', abbreviation: 'ALU' },
+    { code: '76', name: 'VINICOLA SALTON S A', abbreviation: 'SAL' },
+    { code: '6886', name: 'INDUSTRIA E COMERCIO DE BEBIDAS PINHEIRENSE LTDA', abbreviation: 'PIN' },
+    { code: '18456', name: 'M L C FERREIRA E CIA LTDA', abbreviation: 'MLC' },
+    { code: '1731', name: 'SCHWANKE INDUSTRIA TEXTIL LTDA', abbreviation: 'SCH' },
+    { code: '7729', name: 'ISPL IND SULAMERICA PROD DE LIMPEZA LTDA', abbreviation: 'ISPL' },
+    { code: '10140', name: 'NEWELL BRANDS BRASIL LTDA', abbreviation: 'NEW' },
+    { code: '23240', name: 'INDUSTRIA E COMERCIO OLIVEIRA LTDA', abbreviation: 'OLI' },
+    { code: '23241', name: 'BAPTISTA DE ALMEIDA COM IND LTDA', abbreviation: 'BAP' },
+  ];
+
+  const industries = await Promise.all(
+    industriesData.map(({ code, name, abbreviation }) =>
+      prisma.industry.upsert({
+        where: { code },
+        update: { name, abbreviation },
+        create: { code, name, abbreviation, isActive: true },
+      })
+    )
+  );
+  console.log('✅ Industries created/updated:', industries.length);
+
+  // Vincular todas as indústrias a todas as lojas (StoreIndustry)
+  const allStores = await prisma.store.findMany({ select: { id: true } });
+  for (const store of allStores) {
+    for (const industry of industries) {
+      await prisma.storeIndustry.upsert({
+        where: {
+          storeId_industryId: { storeId: store.id, industryId: industry.id },
+        },
+        update: { isActive: true },
+        create: {
+          storeId: store.id,
+          industryId: industry.id,
+          isActive: true,
+        },
+      });
+    }
+  }
+  console.log('✅ StoreIndustry: all industries linked to all stores');
+
   // Create photo quotas
   await Promise.all(
     promoters.map(promoter =>
