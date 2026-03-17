@@ -1,0 +1,45 @@
+# Cloud Build: build backend image from backend/ and deploy to Cloud Run.
+# Trigger must use "Cloud Build configuration file" with this path (e.g. cloudbuild.yaml).
+# Substitutions (from Cloud Run trigger): _SERVICE_NAME, _AR_HOSTNAME, _AR_PROJECT_ID, _AR_REPOSITORY, _DEPLOY_REGION, SHORT_SHA
+
+steps:
+  # Build Docker image: context = backend/, Dockerfile = backend/Dockerfile
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'backend/Dockerfile'
+      - '-t'
+      - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/mustafa-all-systems/${_SERVICE_NAME}:${SHORT_SHA}'
+      - './backend'
+    id: 'build'
+
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/mustafa-all-systems/${_SERVICE_NAME}:${SHORT_SHA}'
+    id: 'push'
+    waitFor: ['build']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/mustafa-all-systems/${_SERVICE_NAME}:${SHORT_SHA}'
+      - '--region'
+      - '${_DEPLOY_REGION}'
+      - '--platform'
+      - 'managed'
+    id: 'deploy'
+    waitFor: ['push']
+
+images:
+  - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/mustafa-all-systems/${_SERVICE_NAME}:${SHORT_SHA}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

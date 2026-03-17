@@ -20,7 +20,7 @@ Este documento descreve os passos para colocar o projeto em produção usando **
 2. Crie um banco (ex.: `promo_gestao`) e usuário com senha.
 3. Obtenha a **connection string**. Exemplo:
    ```text
-   postgresql://USER:PASSWORD@/DATABASE?host=/cloudsql/PROJECT:REGION:INSTANCE
+   postgresql://mustafadb:Mustafa@2026/DATABASE?host=/cloudsql/mustafa-system:southamerica-east1:mustafadb
    ```
    Para Cloud Run conectando ao Cloud SQL, use o conector Unix socket ou o IP público (com autorização de redes).
 4. Anote o valor para usar como `DATABASE_URL` no Cloud Run.
@@ -29,7 +29,17 @@ Este documento descreve os passos para colocar o projeto em produção usando **
 
 ## 2. Backend no Cloud Run
 
-### 2.1 Build e push da imagem
+### 2.0 Deploy automático (Cloud Build trigger)
+
+O repositório inclui **`cloudbuild.yaml`** na raiz para build e deploy automático no push para `main`.
+
+- **Contexto do build:** a imagem é construída a partir da pasta `backend/` (`Dockerfile` e contexto em `./backend`), pois o backend fica em subpasta.
+- **No trigger do Cloud Build:** use **"Cloud Build configuration file (yaml or json)"** e informe o caminho **`cloudbuild.yaml`**. Não use "Dockerfile" com raiz do repositório, pois o Dockerfile está em `backend/` e o contexto correto é `./backend`.
+- **Substituições** que o trigger deve definir (já usadas no template "Deploy to Cloud Run"): `_SERVICE_NAME`, `_AR_HOSTNAME`, `_AR_PROJECT_ID`, `_AR_REPOSITORY`, `_DEPLOY_REGION`. O `SHORT_SHA` é preenchido automaticamente.
+
+Se o build falhar com erro de Dockerfile ou COPY, confira se o trigger está usando este `cloudbuild.yaml` e não um build "Dockerfile" com contexto na raiz.
+
+### 2.1 Build e push da imagem (manual)
 
 Na raiz do repositório (contexto de build = pasta `backend`):
 
