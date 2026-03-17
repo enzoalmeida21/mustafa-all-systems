@@ -25,8 +25,9 @@
       }
     },
     "production": {
-      "android": {
-        "buildType": "apk"
+      "android": { "buildType": "apk" },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://gestaomustafa-1021788471298.us-central1.run.app/api"
       }
     }
   },
