@@ -9,8 +9,8 @@ WORKDIR /app
 # Copy package files from backend
 COPY backend/package*.json backend/tsconfig.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (npm install: works without package-lock.json; use npm ci + lock file for reproducible builds)
+RUN npm install
 
 # Copy source code
 COPY backend/src ./src
@@ -34,7 +34,7 @@ RUN apk add --no-cache curl
 COPY backend/package*.json ./
 
 # Install production dependencies only
-RUN npm ci --only=production
+RUN npm install --omit=dev
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
