@@ -15,7 +15,8 @@
       "**/*"
     ],
     "updates": {
-      "enabled": true
+      "enabled": true,
+      "url": "https://u.expo.dev/ec7a3510-8d52-4352-bb9d-3362ffacb03f"
     },
     "runtimeVersion": {
       "policy": "sdkVersion"
@@ -33,6 +34,12 @@
       },
       "package": "com.promogestao.mobile",
       "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
