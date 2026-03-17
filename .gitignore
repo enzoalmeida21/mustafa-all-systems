@@ -54,3 +54,5 @@ web/.env
 firebase.json
 .gitignore
 firestore.rules
+local_backup.dump
+backend/local_backup.sql
