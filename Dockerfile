@@ -2,7 +2,7 @@
 # Builds the backend; all sources are in backend/.
 
 # Build stage
-FROM node:18-alpine AS builder
+FROM node:18 AS builder
 
 WORKDIR /app
 
@@ -23,12 +23,14 @@ RUN npx prisma generate
 RUN npm run build
 
 # Production stage
-FROM node:18-alpine
+FROM node:18
 
 WORKDIR /app
 
-# Install curl for health checks
-RUN apk add --no-cache curl
+# Install curl and OpenSSL (for Prisma / libssl) and clean up apt cache
+RUN apt-get update && \
+    apt-get install -y curl openssl && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy package files from backend
 COPY backend/package*.json ./
