@@ -1,6 +1,14 @@
 # Cloud Build: build backend image from backend/ and deploy to Cloud Run.
 # Trigger must use "Cloud Build configuration file" with this path (e.g. cloudbuild.yaml).
 # Substitutions (from Cloud Run trigger): _SERVICE_NAME, _AR_HOSTNAME, _AR_PROJECT_ID, _AR_REPOSITORY, _DEPLOY_REGION, SHORT_SHA
+#
+# Migrations (Prisma → Supabase):
+# 1) Crie no Secret Manager (mesmo projeto GCP):
+#    - mustafa-db-direct-url  → connection string DIRETA Supabase :5432 (sslmode=require), para migrate
+#    - mustafa-db-url         → pode ser a mesma URL direta ou a do pooler (migrate usa DIRECT_URL no schema)
+# 2) Conceda à conta de serviço do Cloud Build: Secret Manager Secret Accessor nesses secrets.
+#    Conta típica: PROJECT_NUMBER@cloudbuild.gserviceaccount.com
+# 3) Ajuste os versionName abaixo se usar outros nomes de secret.
 
 steps:
   # Build Docker image: context = backend/, Dockerfile = backend/Dockerfile
@@ -22,6 +30,20 @@ steps:
     id: 'push'
     waitFor: ['build']
 
+  # Prisma migrate deploy (CI) — antes de publicar revisão nova no Cloud Run
+  # package-lock.json está na raiz (workspaces); schema em backend/prisma/
+  - id: 'migrate'
+    name: 'node:18'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        npm ci
+        npx prisma migrate deploy --schema=backend/prisma/schema.prisma
+    secretEnv: ['DATABASE_URL', 'DIRECT_URL']
+    waitFor: ['push']
+
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
@@ -36,10 +58,17 @@ steps:
       - '--platform'
       - 'managed'
     id: 'deploy'
-    waitFor: ['push']
+    waitFor: ['migrate']
 
 images:
   - '${_AR_HOSTNAME}/${_AR_PROJECT_ID}/${_AR_REPOSITORY}/mustafa-all-systems/${_SERVICE_NAME}:${SHORT_SHA}'
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/mustafa-db-direct-url/versions/latest
+      env: DIRECT_URL
+    - versionName: projects/$PROJECT_ID/secrets/mustafa-db-url/versions/latest
+      env: DATABASE_URL
 
 options:
   logging: CLOUD_LOGGING_ONLY
