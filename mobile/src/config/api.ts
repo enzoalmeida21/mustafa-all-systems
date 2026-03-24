@@ -2,14 +2,10 @@
 // Em produção (GCP): defina EXPO_PUBLIC_API_URL com a URL do Cloud Run (ex.: https://sua-api.run.app/api).
 // Ver docs/DEPLOY_GCP_FIREBASE.md. Fallback abaixo para compatibilidade (ex.: Render).
 
-const DEFAULT_PROD_API_URL = 'https://gestaomustafa-1021788471298.us-central1.run.app/api';
-
-// Em builds EAS/produção, `process.env.EXPO_PUBLIC_*` é injetado em build-time pelo Expo.
-// Em alguns runtimes o `process.env` pode vir vazio; por isso mantemos um fallback seguro.
 const API_URL =
   (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_URL)
     ? process.env.EXPO_PUBLIC_API_URL
-    : DEFAULT_PROD_API_URL;
+    : 'https://promo-gestao-backend.onrender.com/api';
 
 // Log da URL configurada (apenas em desenvolvimento)
 if (typeof __DEV__ !== 'undefined' && __DEV__) {

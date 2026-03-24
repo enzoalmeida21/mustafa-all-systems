@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supervisorService } from '../services/supervisorService';
@@ -8,10 +8,8 @@ import Button from '../components/ui/Button';
 import PhotoGallery from '../components/PhotoGallery';
 
 type PhotoWithIndustry = {
-  id?: string;
   type?: string;
   url: string;
-  createdAt?: string | Date;
   industryAbbreviation?: string | null;
   industryName?: string | null;
 };
@@ -21,8 +19,6 @@ function getIndustryLabel(photo: PhotoWithIndustry) {
   if (photo.industryName) return photo.industryName;
   return '—';
 }
-
-type IndustryGroup = { industryLabel: string; photos: PhotoWithIndustry[] };
 
 function getWorkPhotos(visit: {
   photos?: PhotoWithIndustry[];
@@ -37,7 +33,7 @@ function getWorkPhotos(visit: {
 
 /** Agrupa fotos de trabalho por indústria (label). Retorna array de { industryLabel, photos }. */
 function groupPhotosByIndustry(workPhotos: PhotoWithIndustry[]) {
-  const byIndustry = new Map<string, PhotoWithIndustry[]>();
+  const byIndustry = new Map<string, any[]>();
   for (const p of workPhotos) {
     const label = getIndustryLabel(p);
     if (!byIndustry.has(label)) byIndustry.set(label, []);
@@ -49,96 +45,6 @@ function groupPhotosByIndustry(workPhotos: PhotoWithIndustry[]) {
 
 const PLACEHOLDER_IMG = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="120" height="120"%3E%3Crect fill="%23241F35" width="120" height="120"/%3E%3Ctext fill="%239CA3AF" font-size="11" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3ESem imagem%3C/text%3E%3C/svg%3E';
 
-function IndustryAccordion({
-  byIndustry,
-  onOpenGallery,
-}: {
-  byIndustry: IndustryGroup[];
-  onOpenGallery: () => void;
-}) {
-  const [openLabel, setOpenLabel] = useState<string | null>(byIndustry[0]?.industryLabel ?? null);
-
-  useEffect(() => {
-    setOpenLabel(byIndustry[0]?.industryLabel ?? null);
-  }, [byIndustry.length, byIndustry[0]?.industryLabel]);
-
-  if (byIndustry.length === 0) return null;
-
-  return (
-    <div className="space-y-4">
-      {byIndustry.map(({ industryLabel, photos }) => {
-        const isOpen = openLabel === industryLabel;
-        return (
-          <div
-            key={industryLabel}
-            className="rounded-xl border border-dark-border bg-dark-backgroundSecondary/20 overflow-hidden"
-          >
-            <button
-              type="button"
-              className="w-full px-4 py-3 flex items-center justify-between gap-4"
-              onClick={() => setOpenLabel(isOpen ? null : industryLabel)}
-            >
-              <div className="min-w-0 flex items-center gap-3">
-                <span className="w-1.5 h-4 rounded-full bg-primary-500 flex-shrink-0" />
-                <span className="text-sm font-semibold text-text-tertiary uppercase tracking-wider truncate">
-                  {industryLabel}
-                </span>
-                <span className="text-xs text-text-tertiary flex-shrink-0">
-                  ({photos.length})
-                </span>
-              </div>
-              <svg
-                className={`w-4 h-4 text-text-secondary transition-transform duration-200 flex-shrink-0 ${
-                  isOpen ? 'transform rotate-180' : ''
-                }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-
-            {isOpen && (
-              <div className="p-4 pt-0 border-t border-dark-border">
-                {photos.length === 0 ? (
-                  <p className="text-text-tertiary text-sm">Nenhuma foto nesta indústria.</p>
-                ) : (
-                  <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-6 lg:grid-cols-8 gap-2">
-                    {photos.map((photo, idx) => (
-                      <button
-                        key={photo.url || idx}
-                        type="button"
-                        className="relative rounded-lg overflow-hidden bg-dark-backgroundSecondary aspect-square focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:ring-offset-2 focus:ring-offset-dark-card group"
-                        onClick={onOpenGallery}
-                      >
-                        <img
-                          src={photo.url}
-                          alt=""
-                          loading="lazy"
-                          decoding="async"
-                          className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = PLACEHOLDER_IMG;
-                          }}
-                        />
-                        <div className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 px-1.5 text-[10px] text-white truncate">
-                          {photo.createdAt ? format(new Date(photo.createdAt), 'dd/MM HH:mm') : '—'}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function PromoterDetails() {
   const { id } = useParams<{ id: string }>();
   const [selectedVisit, setSelectedVisit] = useState<any>(null);
@@ -147,7 +53,6 @@ export default function PromoterDetails() {
   const [filterIndustry, setFilterIndustry] = useState('');
   const [filterStoreId, setFilterStoreId] = useState('');
   const [filterState, setFilterState] = useState('');
-  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { data: visitsData, isLoading: loadingVisits } = useQuery({
     queryKey: ['promoter-visits', id],
@@ -289,21 +194,8 @@ export default function PromoterDetails() {
       {/* Filtros */}
       <Card className="border-dark-border">
         <CardContent className="py-4">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <span className="text-xs font-medium text-text-tertiary uppercase tracking-wider">
-              Filtros
-            </span>
-            <button
-              type="button"
-              className="md:hidden px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-dark-card border border-dark-border text-text-secondary hover:border-primary-500/50 hover:text-primary-400"
-              onClick={() => setFiltersOpen((v) => !v)}
-            >
-              {filtersOpen ? 'Fechar' : 'Mostrar'}
-            </button>
-          </div>
-          <div className={`${filtersOpen ? 'block' : 'hidden'} md:block`}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-              <div className="">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="min-w-[140px]">
               <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-1.5">Data</label>
               <select
                 value={filterDate}
@@ -316,7 +208,7 @@ export default function PromoterDetails() {
                 ))}
               </select>
             </div>
-              <div className="">
+            <div className="min-w-[160px]">
               <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-1.5">Indústria</label>
               <select
                 value={filterIndustry}
@@ -329,7 +221,7 @@ export default function PromoterDetails() {
                 ))}
               </select>
             </div>
-              <div className="">
+            <div className="min-w-[180px]">
               <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-1.5">Loja</label>
               <select
                 value={filterStoreId}
@@ -342,19 +234,15 @@ export default function PromoterDetails() {
                 ))}
               </select>
             </div>
-              {(filterDate || filterIndustry || filterStoreId || filterState) && (
-                <div className="lg:col-span-4">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => { setFilterDate(''); setFilterIndustry(''); setFilterStoreId(''); setFilterState(''); }}
-                  >
-                    Limpar filtros
-                  </Button>
-                </div>
-              )}
-            </div>
+            {(filterDate || filterIndustry || filterStoreId || filterState) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setFilterDate(''); setFilterIndustry(''); setFilterStoreId(''); setFilterState(''); }}
+              >
+                Limpar filtros
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -399,13 +287,38 @@ export default function PromoterDetails() {
                       {byIndustry.length === 0 ? (
                         <p className="text-text-tertiary text-sm">Nenhuma foto de trabalho nesta visita.</p>
                       ) : (
-                        <IndustryAccordion
-                          byIndustry={byIndustry}
-                          onOpenGallery={() => {
-                            setSelectedVisit(visit);
-                            setIsGalleryOpen(true);
-                          }}
-                        />
+                        byIndustry.map(({ industryLabel, photos }) => (
+                          <div key={industryLabel}>
+                            <h3 className="text-xs font-semibold text-text-tertiary uppercase tracking-wider mb-3 flex items-center gap-2">
+                              <span className="w-1 h-4 rounded-full bg-primary-500" />
+                              {industryLabel}
+                              <span className="text-text-tertiary font-normal">({photos.length})</span>
+                            </h3>
+                            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+                              {photos.map((photo: any, idx: number) => (
+                                <button
+                                  key={photo.id || idx}
+                                  type="button"
+                                  className="relative rounded-lg overflow-hidden bg-dark-backgroundSecondary aspect-square focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:ring-offset-2 focus:ring-offset-dark-card group"
+                                  onClick={() => {
+                                    setSelectedVisit(visit);
+                                    setIsGalleryOpen(true);
+                                  }}
+                                >
+                                  <img
+                                    src={photo.url}
+                                    alt=""
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                    onError={(e) => { (e.target as HTMLImageElement).src = PLACEHOLDER_IMG; }}
+                                  />
+                                  <div className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 px-1.5 text-[10px] text-white truncate">
+                                    {photo.createdAt ? format(new Date(photo.createdAt), 'dd/MM HH:mm') : '—'}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))
                       )}
 
                       {workPhotos.length > 0 && (
