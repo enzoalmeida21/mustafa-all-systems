@@ -128,5 +128,10 @@ export const adminService = {
     });
     return response.data;
   },
+
+  async createPromoterStoreRedoGrant(promoterId: string, storeId: string): Promise<{ message: string }> {
+    const response = await apiClient.post(`/admin/promoters/${promoterId}/stores/${storeId}/redo-grant`);
+    return response.data;
+  },
 };
 

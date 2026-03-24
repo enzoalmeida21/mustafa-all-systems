@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../prisma/client';
 import { AuthRequest } from '../middleware/auth';
+import { UserRole } from '../types';
+import { supervisorCanSetIndustriesForPromoterStore } from '../utils/supervisorScope';
 
 const assignPromoterSchema = z.object({
   promoterId: z.string().uuid(),
@@ -221,53 +223,15 @@ const setMyStoreIndustriesSchema = z.object({
 });
 
 /**
- * Promotor define as indústrias que atende em uma loja (onboarding ou alteração).
+ * Antes o promotor fazia onboarding aqui; indústrias por loja são definidas pelo supervisor na rota.
  * POST /industry-assignments/me/store/:storeId
  */
 export async function setMyStoreIndustries(req: AuthRequest, res: Response) {
   try {
-    const promoterId = req.userId!;
-    const { storeId } = req.params;
-    const { industryIds } = setMyStoreIndustriesSchema.parse(req.body);
-
-    const store = await prisma.store.findUnique({
-      where: { id: storeId },
-      include: {
-        storeIndustries: {
-          where: { isActive: true },
-          select: { industryId: true },
-        },
-      },
-    });
-    if (!store) {
-      return res.status(404).json({ message: 'Loja não encontrada' });
-    }
-
-    const validIds = new Set(store.storeIndustries.map(si => si.industryId));
-    const invalid = industryIds.filter(id => !validIds.has(id));
-    if (invalid.length > 0) {
-      return res.status(400).json({ message: 'Uma ou mais indústrias não pertencem a esta loja' });
-    }
-
-    await prisma.$transaction([
-      prisma.industryAssignment.deleteMany({
-        where: { promoterId, storeId },
-      }),
-      ...industryIds.map(industryId =>
-        prisma.industryAssignment.create({
-          data: { promoterId, industryId, storeId, isActive: true },
-        })
-      ),
-    ]);
-
-    const assignments = await prisma.industryAssignment.findMany({
-      where: { promoterId, storeId, isActive: true },
-      include: { industry: true },
-    });
-
-    res.json({
-      message: 'Indústrias atualizadas',
-      industries: assignments.map(a => a.industry),
+    setMyStoreIndustriesSchema.parse(req.body);
+    return res.status(403).json({
+      message:
+        'As indústrias desta loja são definidas pelo supervisor na configuração de rotas. Peça ao seu supervisor para ajustar.',
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -283,13 +247,30 @@ const setPromoterStoreIndustriesSchema = z.object({
 });
 
 /**
- * Admin: definir indústrias que um promotor atende em uma loja (substitui as atuais).
+ * Admin ou supervisor (escopo da rota): definir indústrias do promotor na loja.
  * PUT /industry-assignments/promoter/:promoterId/store/:storeId
  */
 export async function setPromoterStoreIndustries(req: AuthRequest, res: Response) {
   try {
     const { promoterId, storeId } = req.params;
     const { industryIds } = setPromoterStoreIndustriesSchema.parse(req.body);
+
+    const isAdmin = req.userRole === UserRole.ADMIN;
+    if (!isAdmin) {
+      if (req.userRole !== UserRole.SUPERVISOR || !req.userId) {
+        return res.status(403).json({ message: 'Acesso negado' });
+      }
+      const allowed = await supervisorCanSetIndustriesForPromoterStore(
+        req.userId,
+        promoterId,
+        storeId
+      );
+      if (!allowed) {
+        return res.status(403).json({
+          message: 'Você só pode definir indústrias para promotores e lojas da sua rota.',
+        });
+      }
+    }
 
     const promoter = await prisma.user.findUnique({
       where: { id: promoterId },

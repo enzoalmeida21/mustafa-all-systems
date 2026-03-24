@@ -56,8 +56,24 @@ export async function checkIn(req: AuthRequest, res: Response) {
     });
 
     if (alreadyDoneToday) {
-      return res.status(400).json({
-        message: 'Você já realizou visita nesta loja hoje. Não é possível fazer nova visita no mesmo dia.',
+      const pendingGrant = await prisma.promoterStoreRedoGrant.findFirst({
+        where: {
+          promoterId,
+          storeId,
+          usedAt: null,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (!pendingGrant) {
+        return res.status(400).json({
+          message: 'Você já realizou visita nesta loja hoje. Não é possível fazer nova visita no mesmo dia.',
+        });
+      }
+
+      await prisma.promoterStoreRedoGrant.update({
+        where: { id: pendingGrant.id },
+        data: { usedAt: new Date() },
       });
     }
 
@@ -380,7 +396,14 @@ export async function getStores(req: AuthRequest, res: Response) {
       },
       select: { storeId: true },
     });
-    const completedStoreIdsToday = [...new Set(completedToday.map((v: { storeId: string }) => v.storeId))];
+    let completedStoreIdsToday = [...new Set(completedToday.map((v: { storeId: string }) => v.storeId))];
+
+    const pendingRedoGrants = await prisma.promoterStoreRedoGrant.findMany({
+      where: { promoterId, usedAt: null },
+      select: { storeId: true },
+    });
+    const redoEligibleStoreIds = new Set(pendingRedoGrants.map((r: { storeId: string }) => r.storeId));
+    completedStoreIdsToday = completedStoreIdsToday.filter(id => !redoEligibleStoreIds.has(id));
 
     // Buscar lojas atribuídas ao promotor (rota configurada)
     const routeAssignments = await prisma.routeAssignment.findMany({
@@ -662,17 +685,17 @@ export async function getVisitIndustries(req: AuthRequest, res: Response) {
         visitId: visit.id,
         storeId,
         needsOnboarding: false,
+        needsSupervisorAssignment: false,
         industries: assignments.map(a => a.industry),
       });
     }
 
-    const storeIndustries = visit.store.storeIndustries;
-    const industries = storeIndustries.map(si => si.industry);
     return res.json({
       visitId: visit.id,
       storeId,
-      needsOnboarding: true,
-      industries,
+      needsOnboarding: false,
+      needsSupervisorAssignment: true,
+      industries: [],
     });
   } catch (error) {
     console.error('Get visit industries error:', error);
@@ -741,10 +764,7 @@ export async function getVisitCoverage(req: AuthRequest, res: Response) {
     if (assignments.length > 0) {
       requiredList = assignments.map(a => ({ industryId: a.industryId, industry: a.industry }));
     } else {
-      requiredList = visit.store.storeIndustries.map(si => ({
-        industryId: si.industryId,
-        industry: si.industry,
-      }));
+      requiredList = [];
     }
 
     const coverage = requiredList.map(({ industryId, industry }) => ({

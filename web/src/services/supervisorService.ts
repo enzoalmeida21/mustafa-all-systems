@@ -220,6 +220,24 @@ export const supervisorService = {
     return response.data;
   },
 
+  async getPromoterIndustryAssignments(
+    promoterId: string
+  ): Promise<{ id: string; industry: { id: string; name: string; code: string }; storeId: string | null }[]> {
+    const response = await apiClient.get(`/industry-assignments/promoter/${promoterId}`);
+    return response.data.assignments || [];
+  },
+
+  async setPromoterStoreIndustries(
+    promoterId: string,
+    storeId: string,
+    industryIds: string[]
+  ): Promise<{ industries: { id: string; name: string; code: string }[] }> {
+    const response = await apiClient.put(`/industry-assignments/promoter/${promoterId}/store/${storeId}`, {
+      industryIds,
+    });
+    return response.data;
+  },
+
   async updateStoreIndustries(storeId: string, industryIds: string[]) {
     const response = await apiClient.put(`/store-industries/${storeId}`, {
       industryIds,

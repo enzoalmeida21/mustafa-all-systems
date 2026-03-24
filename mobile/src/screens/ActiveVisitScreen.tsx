@@ -71,6 +71,8 @@ export default function ActiveVisitScreen({ route }: any) {
   const [activeIndustryId, setActiveIndustryId] = useState<string | null>(null);
   const [expandedIndustries, setExpandedIndustries] = useState<Set<string>>(new Set());
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
+  const [needsSupervisorAssignment, setNeedsSupervisorAssignment] = useState<boolean | null>(null);
+  const [industriesLoaded, setIndustriesLoaded] = useState(false);
   const [onboardingSelectedIds, setOnboardingSelectedIds] = useState<Set<string>>(new Set());
   const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
 
@@ -89,27 +91,24 @@ export default function ActiveVisitScreen({ route }: any) {
   async function loadIndustries() {
     if (!visit?.id || !visit?.store?.id) return;
 
+    setIndustriesLoaded(false);
     try {
       const data = await industryService.getVisitIndustries(visit.id);
       setIndustries(data.industries);
       setNeedsOnboarding(data.needsOnboarding);
-      if (!data.needsOnboarding) {
+      setNeedsSupervisorAssignment(!!data.needsSupervisorAssignment);
+      if (!data.needsOnboarding && !data.needsSupervisorAssignment && data.industries.length > 0) {
         setExpandedIndustries(new Set(data.industries.map((i: Industry) => i.id)));
       } else {
         setOnboardingSelectedIds(new Set());
       }
     } catch (error) {
       console.error('Error loading industries:', error);
-      try {
-        const storeIndustries = await industryService.getStoreIndustries(visit.store.id);
-        if (storeIndustries.length > 0) {
-          setIndustries(storeIndustries);
-          setNeedsOnboarding(true);
-          setOnboardingSelectedIds(new Set());
-        }
-      } catch (e) {
-        console.error('Error fallback load industries:', e);
-      }
+      setNeedsSupervisorAssignment(false);
+      setNeedsOnboarding(false);
+      setIndustries([]);
+    } finally {
+      setIndustriesLoaded(true);
     }
   }
 
@@ -675,7 +674,35 @@ export default function ActiveVisitScreen({ route }: any) {
     );
   }
 
-  // ---- Onboarding: escolher indústrias nesta loja ----
+  if (!industriesLoaded) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary[600]} />
+        <Text style={[styles.text, { marginTop: 16 }]}>Carregando indústrias da visita...</Text>
+      </View>
+    );
+  }
+
+  // ---- Aguardando supervisor definir indústrias na rota (web) ----
+
+  if (needsSupervisorAssignment === true) {
+    return (
+      <View style={[styles.container, { padding: 24, justifyContent: 'center' }]}>
+        <Text style={styles.title}>Indústrias não configuradas</Text>
+        <Text style={[styles.subtitle, { marginTop: 12 }]}>
+          Seu supervisor precisa marcar as indústrias desta loja em Configurar rotas (painel web) antes de você enviar fotos por indústria.
+        </Text>
+        <TouchableOpacity
+          style={[styles.navButton, styles.primaryButton, { marginTop: 24 }]}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.navButtonText}>Voltar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ---- Onboarding legado (API não deve mais retornar needsOnboarding true) ----
 
   if (needsOnboarding === true && industries.length > 0) {
     return (

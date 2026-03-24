@@ -10,6 +10,7 @@ import {
   getSupervisorRegions,
   setPromoterSupervisors,
   getPromoterSupervisors,
+  createPromoterStoreRedoGrant,
 } from '../controllers/admin.controller';
 import { authenticate, requireAdmin } from '../middleware/auth';
 
@@ -28,6 +29,13 @@ router.post('/supervisors/:id/regions', authenticate, requireAdmin, setSuperviso
 
 router.get('/promoters/:id/supervisors', authenticate, requireAdmin, getPromoterSupervisors);
 router.post('/promoters/:id/supervisors', authenticate, requireAdmin, setPromoterSupervisors);
+
+router.post(
+  '/promoters/:id/stores/:storeId/redo-grant',
+  authenticate,
+  requireAdmin,
+  createPromoterStoreRedoGrant
+);
 
 export default router;
 

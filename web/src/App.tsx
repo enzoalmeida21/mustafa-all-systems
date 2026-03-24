@@ -126,13 +126,13 @@ function AppRoutes() {
           }
         />
 
-        {/* Configuração de rotas e gestão de lojas: apenas ADMIN */}
+        {/* Configuração de rotas: supervisor (escopo) ou admin */}
         <RouterRoute
           path="routes/config"
           element={
-            <AdminRoute>
+            <SupervisorOrAdminRoute>
               <RouteConfig />
-            </AdminRoute>
+            </SupervisorOrAdminRoute>
           }
         />
         <RouterRoute
