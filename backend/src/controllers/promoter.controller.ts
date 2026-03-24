@@ -218,8 +218,9 @@ export async function uploadPhotos(req: AuthRequest, res: Response) {
     // Processar cada foto
     // Para FACADE_CHECKIN e FACADE_CHECKOUT: apenas uma por visita (atualizar se existir)
     // Para OTHER: permitir múltiplas fotos (sempre criar nova)
-    const createdPhotos = await Promise.all(
-      photos.map(async (photo) => {
+    // Processamento sequencial reduz picos de conexões com poolers (ex.: Supabase/pgBouncer)
+    const createdPhotos: any[] = [];
+    for (const photo of photos) {
         // Para fotos de check-in e check-out, verificar se já existe e atualizar
         if (photo.type === PhotoType.FACADE_CHECKIN || photo.type === PhotoType.FACADE_CHECKOUT) {
           const existingPhoto = await prisma.photo.findFirst({
@@ -240,7 +241,8 @@ export async function uploadPhotos(req: AuthRequest, res: Response) {
               },
             });
             console.log(`✅ Foto ${photo.type} atualizada: ${existingPhoto.url} -> ${photo.url}`);
-            return updated;
+            createdPhotos.push(updated);
+            continue;
           }
         }
         
@@ -272,10 +274,8 @@ export async function uploadPhotos(req: AuthRequest, res: Response) {
             console.warn('⚠️ Erro ao associar foto à indústria:', assocError);
           }
         }
-
-        return created;
-      })
-    );
+        createdPhotos.push(created);
+    }
 
     // Atualizar também checkInPhotoUrl e checkOutPhotoUrl na tabela Visit se necessário
     const checkInPhoto = photos.find(p => p.type === PhotoType.FACADE_CHECKIN);
@@ -488,28 +488,27 @@ export async function getVisits(req: AuthRequest, res: Response) {
     const limitNum = parseInt(limit as string, 10);
     const skip = (pageNum - 1) * limitNum;
 
-    // Buscar visitas do promotor
-    const [visits, total] = await Promise.all([
-      prisma.visit.findMany({
-        where: { promoterId },
-        include: {
-          store: true,
-          photos: {
-            orderBy: {
-              createdAt: 'asc',
-            },
+    // Executar sequencialmente para reduzir concorrência de statements no pooler.
+    const visits = await prisma.visit.findMany({
+      where: { promoterId },
+      include: {
+        store: true,
+        photos: {
+          orderBy: {
+            createdAt: 'asc',
           },
         },
-        orderBy: {
-          checkInAt: 'desc',
-        },
-        skip,
-        take: limitNum,
-      }),
-      prisma.visit.count({
-        where: { promoterId },
-      }),
-    ]);
+      },
+      orderBy: {
+        checkInAt: 'desc',
+      },
+      skip,
+      take: limitNum,
+    });
+
+    const total = await prisma.visit.count({
+      where: { promoterId },
+    });
 
     res.json({
       visits: visits.map((visit: any) => ({

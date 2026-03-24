@@ -930,78 +930,91 @@ export async function getPendingOverview(req: AuthRequest, res: Response) {
           ra => ra.supervisorId === supervisorId || ra.supervisorId === null
         );
 
-        const stores = await Promise.all(
-          relevantAssignments.map(async (ra) => {
-            const store = ra.store;
-            // Se o promotor tem IndustryAssignment nesta loja, usar essas indústrias; senão StoreIndustry
-            const promoterStoreAssignments = await prisma.industryAssignment.findMany({
-              where: {
-                promoterId: promoter.id,
-                storeId: store.id,
-                isActive: true,
+        const storeIds = relevantAssignments.map(ra => ra.store.id);
+
+        // Reduz N+1: busca assignments e últimas visitas em lote por promotor.
+        const [assignments, latestVisits] = await Promise.all([
+          prisma.industryAssignment.findMany({
+            where: {
+              promoterId: promoter.id,
+              isActive: true,
+              storeId: { in: storeIds },
+            },
+            include: { industry: true },
+          }),
+          prisma.visit.findMany({
+            where: {
+              promoterId: promoter.id,
+              storeId: { in: storeIds },
+            },
+            orderBy: [{ storeId: 'asc' }, { checkInAt: 'desc' }],
+            distinct: ['storeId'],
+            select: {
+              storeId: true,
+              checkInAt: true,
+              checkOutAt: true,
+              photos: {
+                where: { type: 'OTHER' },
+                select: { selectedIndustryId: true },
               },
-              include: { industry: true },
-            });
-            const requiredIndustries =
-              promoterStoreAssignments.length > 0
-                ? promoterStoreAssignments.map(a => a.industry)
-                : store.storeIndustries.map(si => si.industry);
+            },
+          }),
+        ]);
 
-            if (requiredIndustries.length === 0) {
-              return {
-                id: store.id,
-                name: store.name,
-                industries: [],
-                totalRequired: 0,
-                totalCovered: 0,
-              };
-            }
+        const assignmentsByStore = new Map<string, typeof assignments>();
+        assignments.forEach((assignment) => {
+          const storeAssignments = assignmentsByStore.get(assignment.storeId || '') || [];
+          storeAssignments.push(assignment);
+          assignmentsByStore.set(assignment.storeId || '', storeAssignments);
+        });
 
-            // Buscar visita mais recente deste promotor nesta loja
-            const latestVisit = await prisma.visit.findFirst({
-              where: {
-                promoterId: promoter.id,
-                storeId: store.id,
-              },
-              orderBy: { checkInAt: 'desc' },
-              select: {
-                id: true,
-                checkInAt: true,
-                checkOutAt: true,
-                photos: {
-                  where: { type: 'OTHER' },
-                  select: { selectedIndustryId: true },
-                },
-              },
-            });
+        const latestVisitByStore = new Map(latestVisits.map(v => [v.storeId, v]));
 
-            const coveredIndustryIds = new Set(
-              (latestVisit?.photos || [])
-                .map(p => p.selectedIndustryId)
-                .filter(Boolean)
-            );
+        const stores = relevantAssignments.map((ra) => {
+          const store = ra.store;
+          const promoterStoreAssignments = assignmentsByStore.get(store.id) || [];
+          const requiredIndustries =
+            promoterStoreAssignments.length > 0
+              ? promoterStoreAssignments.map(a => a.industry)
+              : store.storeIndustries.map(si => si.industry);
 
-            const industries = requiredIndustries.map(ind => ({
-              id: ind.id,
-              name: ind.name,
-              code: ind.code,
-              hasCoverage: coveredIndustryIds.has(ind.id),
-              photoCount: (latestVisit?.photos || []).filter(
-                p => p.selectedIndustryId === ind.id
-              ).length,
-            }));
-
+          if (requiredIndustries.length === 0) {
             return {
               id: store.id,
               name: store.name,
-              lastVisitAt: latestVisit?.checkInAt || null,
-              lastVisitCompleted: !!latestVisit?.checkOutAt,
-              industries,
-              totalRequired: requiredIndustries.length,
-              totalCovered: industries.filter(i => i.hasCoverage).length,
+              industries: [],
+              totalRequired: 0,
+              totalCovered: 0,
             };
-          })
-        );
+          }
+
+          const latestVisit = latestVisitByStore.get(store.id);
+          const coveredIndustryIds = new Set(
+            (latestVisit?.photos || [])
+              .map(p => p.selectedIndustryId)
+              .filter(Boolean)
+          );
+
+          const industries = requiredIndustries.map(ind => ({
+            id: ind.id,
+            name: ind.name,
+            code: ind.code,
+            hasCoverage: coveredIndustryIds.has(ind.id),
+            photoCount: (latestVisit?.photos || []).filter(
+              p => p.selectedIndustryId === ind.id
+            ).length,
+          }));
+
+          return {
+            id: store.id,
+            name: store.name,
+            lastVisitAt: latestVisit?.checkInAt || null,
+            lastVisitCompleted: !!latestVisit?.checkOutAt,
+            industries,
+            totalRequired: requiredIndustries.length,
+            totalCovered: industries.filter(i => i.hasCoverage).length,
+          };
+        });
 
         const totalRequired = stores.reduce((sum, s) => sum + s.totalRequired, 0);
         const totalCovered = stores.reduce((sum, s) => sum + s.totalCovered, 0);
