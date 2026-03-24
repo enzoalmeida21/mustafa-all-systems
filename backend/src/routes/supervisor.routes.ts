@@ -34,7 +34,8 @@ import {
   getAllStores,
   getStore,
 } from '../controllers/store.controller';
-import { authenticate, requireAdmin, requireSupervisor } from '../middleware/auth';
+import { authenticate, requireAdmin, requireSupervisor, AuthRequest } from '../middleware/auth';
+import { UserRole } from '../types';
 
 const router = Router();
 
@@ -56,29 +57,32 @@ router.post('/export/report', requireSupervisor, exportReport);
 router.get('/export/status/:id', requireSupervisor, getExportStatus);
 router.get('/export/download/:id', requireSupervisor, downloadExport);
 
-// 🔒 Rotas de configuração de rotas (assignments) - apenas ADMIN
-router.post('/promoters/:promoterId/route-assignment', requireAdmin, setPromoterRoute);
-router.post('/promoters/:promoterId/route-assignment/add', requireAdmin, addStoresToRoute);
-router.delete('/promoters/:promoterId/route-assignment/:storeId', requireAdmin, removeStoreFromRoute);
+// 🔒 Configuração de rotas: supervisor (escopo) ou admin
+router.post('/promoters/:promoterId/route-assignment', requireSupervisor, setPromoterRoute);
+router.post('/promoters/:promoterId/route-assignment/add', requireSupervisor, addStoresToRoute);
+router.delete('/promoters/:promoterId/route-assignment/:storeId', requireSupervisor, removeStoreFromRoute);
 router.patch('/promoters/:promoterId/route-assignment/:storeId/supervisor', requireAdmin, updateRouteAssignmentSupervisor);
 router.get(
   '/promoters/:promoterId/route-assignment',
-  requireAdmin,
+  requireSupervisor,
   getPromoterRouteAssignment
 );
 router.put(
   '/promoters/:promoterId/stores/:storeId/hours',
-  requireAdmin,
+  requireSupervisor,
   updateStoreHours
 );
 router.get('/promoters/:promoterId/hours-report', requireAdmin, getPromoterHoursReport);
 router.get('/promoters/hours-report', requireAdmin, getAllPromotersHoursReport);
-router.get('/routes', requireAdmin, getAllRoutes);
-router.get('/supervisors-list', requireAdmin, async (req, res) => {
+router.get('/routes', requireSupervisor, getAllRoutes);
+router.get('/supervisors-list', requireSupervisor, async (req: AuthRequest, res) => {
   try {
     const prisma = (await import('../prisma/client')).default;
+    const isAdmin = req.userRole === UserRole.ADMIN;
     const supervisors = await prisma.user.findMany({
-      where: { role: 'SUPERVISOR' },
+      where: isAdmin
+        ? { role: UserRole.SUPERVISOR }
+        : { id: req.userId!, role: UserRole.SUPERVISOR },
       select: { id: true, name: true, email: true, state: true },
       orderBy: { name: 'asc' },
     });
@@ -87,7 +91,7 @@ router.get('/supervisors-list', requireAdmin, async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-router.get('/stores/available', requireAdmin, getAvailableStores);
+router.get('/stores/available', requireSupervisor, getAvailableStores);
 
 // 🔒 Rotas de gerenciamento de lojas - SUPERVISOR e ADMIN
 router.get('/stores', requireSupervisor, getAllStores);

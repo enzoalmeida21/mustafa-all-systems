@@ -7,15 +7,15 @@ import {
   setMyStoreIndustries,
   setPromoterStoreIndustries,
 } from '../controllers/industryAssignment.controller';
-import { authenticate, requireAdmin } from '../middleware/auth';
+import { authenticate, requireAdmin, requireSupervisor } from '../middleware/auth';
 
 const router = Router();
 
 // Promotor: definir indústrias que atende em uma loja (onboarding)
 router.post('/me/store/:storeId', authenticate, setMyStoreIndustries);
 
-// Admin: definir indústrias de um promotor em uma loja
-router.put('/promoter/:promoterId/store/:storeId', authenticate, requireAdmin, setPromoterStoreIndustries);
+// Admin ou supervisor (escopo da rota): indústrias do promotor na loja
+router.put('/promoter/:promoterId/store/:storeId', authenticate, requireSupervisor, setPromoterStoreIndustries);
 
 // Rotas protegidas (ADMIN ou SUPERVISOR)
 router.post('/', authenticate, requireAdmin, assignPromoterToIndustry);

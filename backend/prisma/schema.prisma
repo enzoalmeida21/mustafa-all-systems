@@ -47,8 +47,26 @@ model User {
   promoterSupervisors   PromoterSupervisor[] @relation("PromoterSupervisors")
   supervisorPromoters   PromoterSupervisor[] @relation("SupervisorPromoters")
   supervisedRoutes      RouteAssignment[]    @relation("SupervisedRoutes")
+  redoGrantsAsPromoter  PromoterStoreRedoGrant[] @relation("RedoGrantPromoter")
+  redoGrantsGranted     PromoterStoreRedoGrant[] @relation("RedoGrantGrantedBy")
 
   @@index([state])
+}
+
+model PromoterStoreRedoGrant {
+  id          String    @id @default(uuid())
+  promoterId  String
+  storeId     String
+  grantedById String
+  createdAt   DateTime  @default(now())
+  usedAt      DateTime?
+
+  promoter  User  @relation("RedoGrantPromoter", fields: [promoterId], references: [id], onDelete: Cascade)
+  store     Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  grantedBy User  @relation("RedoGrantGrantedBy", fields: [grantedById], references: [id], onDelete: Cascade)
+
+  @@index([promoterId, storeId])
+  @@index([usedAt])
 }
 
 model Store {
@@ -73,6 +91,7 @@ model Store {
   photoIndustries       PhotoIndustry[]
   informationDistributions InformationDistribution[]
   storeIndustries       StoreIndustry[]
+  promoterStoreRedoGrants PromoterStoreRedoGrant[]
 }
 
 model Visit {

@@ -2,6 +2,26 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { AuthRequest } from '../middleware/auth';
 import prisma from '../prisma/client';
+import { UserRole } from '../types';
+import { isPromoterInSupervisorScope } from '../utils/supervisorScope';
+
+async function assertSupervisorRouteAccess(
+  req: AuthRequest,
+  res: Response,
+  promoterId: string
+): Promise<boolean> {
+  if (req.userRole === UserRole.ADMIN) return true;
+  if (req.userRole !== UserRole.SUPERVISOR || !req.userId) {
+    res.status(403).json({ message: 'Acesso negado' });
+    return false;
+  }
+  const ok = await isPromoterInSupervisorScope(req.userId, promoterId);
+  if (!ok) {
+    res.status(403).json({ message: 'Promotor fora do seu escopo' });
+    return false;
+  }
+  return true;
+}
 
 const createRouteSchema = z.object({
   storeIds: z.array(z.string().uuid()).min(1, 'Selecione pelo menos uma loja'),
@@ -25,7 +45,19 @@ export async function setPromoterRoute(req: AuthRequest, res: Response) {
       return res.status(400).json({ message: 'ID do promotor inválido' });
     }
 
-    const { storeIds, orders, expectedHours, supervisorId } = createRouteSchema.parse(req.body);
+    if (!(await assertSupervisorRouteAccess(req, res, promoterId))) return;
+
+    const parsed = createRouteSchema.parse(req.body);
+    let { storeIds, orders, expectedHours, supervisorId } = parsed;
+
+    if (req.userRole === UserRole.SUPERVISOR) {
+      if (supervisorId && supervisorId !== req.userId) {
+        return res.status(403).json({
+          message: 'Você só pode vincular a si mesmo como supervisor desta rota.',
+        });
+      }
+      supervisorId = supervisorId || req.userId!;
+    }
 
     const promoter = await prisma.user.findUnique({
       where: { id: promoterId },
@@ -101,10 +133,21 @@ export async function addStoresToRoute(req: AuthRequest, res: Response) {
       return res.status(400).json({ message: 'ID do promotor inválido' });
     }
 
-    const { storeIds, supervisorId } = z.object({
+    if (!(await assertSupervisorRouteAccess(req, res, promoterId))) return;
+
+    let { storeIds, supervisorId } = z.object({
       storeIds: z.array(z.string().uuid()).min(1, 'Selecione pelo menos uma loja'),
       supervisorId: z.string().uuid().optional().nullable(),
     }).parse(req.body);
+
+    if (req.userRole === UserRole.SUPERVISOR) {
+      if (supervisorId && supervisorId !== req.userId) {
+        return res.status(403).json({
+          message: 'Você só pode vincular a si mesmo como supervisor desta rota.',
+        });
+      }
+      supervisorId = supervisorId || req.userId!;
+    }
 
     const promoter = await prisma.user.findUnique({ where: { id: promoterId } });
     if (!promoter || promoter.role !== 'PROMOTER') {
@@ -166,6 +209,8 @@ export async function removeStoreFromRoute(req: AuthRequest, res: Response) {
   try {
     const { promoterId, storeId } = req.params;
 
+    if (!(await assertSupervisorRouteAccess(req, res, promoterId))) return;
+
     const assignment = await prisma.routeAssignment.findUnique({
       where: { promoterId_storeId: { promoterId, storeId } },
     });
@@ -187,6 +232,8 @@ export async function removeStoreFromRoute(req: AuthRequest, res: Response) {
 export async function getPromoterRoute(req: AuthRequest, res: Response) {
   try {
     const { promoterId } = req.params;
+
+    if (!(await assertSupervisorRouteAccess(req, res, promoterId))) return;
 
     const promoter = await prisma.user.findUnique({
       where: { id: promoterId },
@@ -236,11 +283,24 @@ export async function getPromoterRoute(req: AuthRequest, res: Response) {
   }
 }
 
-// Listar todas as rotas (para supervisor)
+// Listar rotas (admin: todos; supervisor: só promotores do escopo)
 export async function getAllRoutes(req: AuthRequest, res: Response) {
   try {
+    const isAdmin = req.userRole === UserRole.ADMIN;
+    const supervisorId = req.userId!;
+
+    const promoterWhere: { role: UserRole; OR?: object[] } = {
+      role: UserRole.PROMOTER,
+    };
+    if (!isAdmin) {
+      promoterWhere.OR = [
+        { promoterSupervisors: { some: { supervisorId } } },
+        { routeAssignments: { some: { supervisorId, isActive: true } } },
+      ];
+    }
+
     const promoters = await prisma.user.findMany({
-      where: { role: 'PROMOTER' },
+      where: promoterWhere,
       include: {
         routeAssignments: {
           where: { isActive: true },
@@ -350,6 +410,9 @@ export async function getAvailableStores(req: AuthRequest, res: Response) {
 export async function updateStoreHours(req: AuthRequest, res: Response) {
   try {
     const { promoterId, storeId } = req.params;
+
+    if (!(await assertSupervisorRouteAccess(req, res, promoterId))) return;
+
     const { expectedHours } = req.body;
 
     if (expectedHours !== undefined && (typeof expectedHours !== 'number' || expectedHours < 0)) {

@@ -502,3 +502,44 @@ export async function getPromoterSupervisors(req: AuthRequest, res: Response) {
   }
 }
 
+/**
+ * Permite ao promotor iniciar nova visita na mesma loja no mesmo dia (uma vez por concessão).
+ * POST /admin/promoters/:id/stores/:storeId/redo-grant
+ */
+export async function createPromoterStoreRedoGrant(req: AuthRequest, res: Response) {
+  try {
+    const { id: promoterId, storeId } = req.params;
+
+    if (!z.string().uuid().safeParse(promoterId).success || !z.string().uuid().safeParse(storeId).success) {
+      return res.status(400).json({ message: 'IDs inválidos' });
+    }
+
+    const promoter = await prisma.user.findUnique({ where: { id: promoterId } });
+    if (!promoter || promoter.role !== UserRole.PROMOTER) {
+      return res.status(404).json({ message: 'Promotor não encontrado' });
+    }
+
+    const store = await prisma.store.findUnique({ where: { id: storeId } });
+    if (!store) {
+      return res.status(404).json({ message: 'Loja não encontrada' });
+    }
+
+    const grant = await prisma.promoterStoreRedoGrant.create({
+      data: {
+        promoterId,
+        storeId,
+        grantedById: req.userId!,
+      },
+    });
+
+    res.status(201).json({
+      message:
+        'Concessão criada. O promotor poderá fazer check-in novamente nesta loja hoje (a concessão é usada no próximo check-in após já ter finalizado uma visita no dia).',
+      grant: { id: grant.id, promoterId, storeId, createdAt: grant.createdAt },
+    });
+  } catch (error) {
+    console.error('Create redo grant error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+

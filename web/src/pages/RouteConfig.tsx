@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '../context/AuthContext';
 import { supervisorService } from '../services/supervisorService';
 import { adminService } from '../services/adminService';
 import Card, { CardHeader, CardContent } from '../components/ui/Card';
@@ -35,6 +36,8 @@ interface RouteEntry {
 }
 
 export default function RouteConfig() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
   const queryClient = useQueryClient();
   const [storeSearch, setStoreSearch] = useState('');
   const [stateFilter, setStateFilter] = useState('');
@@ -74,7 +77,7 @@ export default function RouteConfig() {
 
   const { data: promoterAssignmentsData } = useQuery({
     queryKey: ['promoter-industry-assignments', industryModal?.promoterId],
-    queryFn: () => adminService.getPromoterIndustryAssignments(industryModal!.promoterId),
+    queryFn: () => supervisorService.getPromoterIndustryAssignments(industryModal!.promoterId),
     enabled: !!industryModal?.promoterId,
   });
 
@@ -90,11 +93,16 @@ export default function RouteConfig() {
 
   const saveStoreIndustriesMutation = useMutation({
     mutationFn: ({ promoterId, storeId, industryIds }: { promoterId: string; storeId: string; industryIds: string[] }) =>
-      adminService.setPromoterStoreIndustries(promoterId, storeId, industryIds),
+      supervisorService.setPromoterStoreIndustries(promoterId, storeId, industryIds),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['promoter-industry-assignments'] });
       setIndustryModal(null);
     },
+  });
+
+  const redoGrantMutation = useMutation({
+    mutationFn: ({ promoterId, storeId }: { promoterId: string; storeId: string }) =>
+      adminService.createPromoterStoreRedoGrant(promoterId, storeId),
   });
 
   const addMutation = useMutation({
@@ -185,7 +193,7 @@ export default function RouteConfig() {
       <div>
         <h1 className="text-2xl font-bold text-text-primary">Atribuir Lojas a Promotores</h1>
         <p className="text-text-secondary text-sm mt-1">
-          Gerencie quais lojas cada promotor visita e qual supervisor cuida de cada rota.
+          Gerencie quais lojas cada promotor visita, as indústrias por loja (supervisor) e qual supervisor cuida de cada rota.
         </p>
       </div>
 
@@ -432,7 +440,7 @@ export default function RouteConfig() {
 
                                       {/* Supervisor badge / editor */}
                                       <div className="ml-auto flex items-center gap-2 shrink-0">
-                                        {isEditingSup ? (
+                                        {isAdmin && isEditingSup ? (
                                           <select
                                             autoFocus
                                             defaultValue={s.supervisor?.id || ''}
@@ -455,14 +463,16 @@ export default function RouteConfig() {
                                           <button
                                             onClick={(e) => {
                                               e.stopPropagation();
-                                              setEditingSupervisor({ promoterId: route.promoter.id, storeId: s.store.id });
+                                              if (isAdmin) {
+                                                setEditingSupervisor({ promoterId: route.promoter.id, storeId: s.store.id });
+                                              }
                                             }}
                                             className={`px-2 py-0.5 rounded text-xs transition-colors ${
                                               s.supervisor
                                                 ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
                                                 : 'bg-dark-border/50 text-text-tertiary hover:bg-dark-border hover:text-text-secondary'
-                                            }`}
-                                            title="Clique para alterar supervisor"
+                                            } ${!isAdmin ? 'cursor-default' : ''}`}
+                                            title={isAdmin ? 'Clique para alterar supervisor' : 'Apenas admin altera o supervisor da rota'}
                                           >
                                             {s.supervisor ? s.supervisor.name : 'sem sup.'}
                                           </button>
@@ -479,10 +489,40 @@ export default function RouteConfig() {
                                             });
                                           }}
                                           className="px-2 py-0.5 rounded text-xs bg-primary-600/20 text-primary-400 hover:bg-primary-600/30 transition-colors"
-                                          title="Indústrias que o promotor atende nesta loja"
+                                          title="Definir indústrias do promotor nesta loja (supervisor)"
                                         >
                                           Indústrias
                                         </button>
+
+                                        {isAdmin && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (
+                                                confirm(
+                                                  `Permitir que ${route.promoter.name} faça uma nova visita em "${s.store.name}" hoje (mesmo já tendo finalizado)?`
+                                                )
+                                              ) {
+                                                redoGrantMutation.mutate(
+                                                  { promoterId: route.promoter.id, storeId: s.store.id },
+                                                  {
+                                                    onSuccess: (data) => {
+                                                      alert(data?.message || 'Concessão criada.');
+                                                    },
+                                                    onError: () => {
+                                                      alert('Não foi possível criar a concessão.');
+                                                    },
+                                                  }
+                                                );
+                                              }
+                                            }}
+                                            disabled={redoGrantMutation.isPending}
+                                            className="px-2 py-0.5 rounded text-xs bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors disabled:opacity-50"
+                                            title="Admin: permite nova visita na mesma loja no mesmo dia"
+                                          >
+                                            Refazer loja
+                                          </button>
+                                        )}
 
                                         <button
                                           onClick={(e) => {
@@ -535,7 +575,7 @@ export default function RouteConfig() {
             </CardHeader>
             <CardContent className="flex-1 overflow-y-auto">
               <p className="text-sm text-text-secondary mb-3">
-                Marque as indústrias que este promotor atende nesta loja.
+                Marque as indústrias que este promotor deve cobrir nesta loja. O app do promotor usa esta lista (ele não escolhe mais no primeiro check-in).
               </p>
               {!storeIndustriesData?.industries?.length ? (
                 <div className="py-6 text-center text-text-tertiary">Carregando...</div>

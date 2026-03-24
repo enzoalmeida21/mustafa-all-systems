@@ -95,6 +95,7 @@ export const industryService = {
     visitId: string;
     storeId: string;
     needsOnboarding: boolean;
+    needsSupervisorAssignment?: boolean;
     industries: Industry[];
   }> {
     const response = await apiClient.get(`/promoters/visits/${visitId}/industries`);

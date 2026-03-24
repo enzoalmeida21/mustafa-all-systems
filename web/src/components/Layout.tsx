@@ -196,12 +196,14 @@ export default function Layout() {
     ...(isSupervisorOrAdmin
       ? [{ name: 'Relatórios', path: '/reports', icon: ReportsIcon }]
       : []),
-    ...(isAdmin
+    ...(isSupervisorOrAdmin
       ? [
           { name: 'Gerenciar Lojas', path: '/stores', icon: StoresIcon },
           { name: 'Configurar Rotas', path: '/routes/config', icon: RouteIcon },
-          { name: 'Indústrias/Loja', path: '/stores/industries', icon: AdminIndustriesIcon },
         ]
+      : []),
+    ...(isAdmin
+      ? [{ name: 'Indústrias/Loja', path: '/stores/industries', icon: AdminIndustriesIcon }]
       : []),
     { name: 'Configurações', path: '/settings', icon: SettingsIcon },
     ...(isAdmin
