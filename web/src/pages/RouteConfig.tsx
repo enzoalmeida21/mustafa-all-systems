@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { supervisorService } from '../services/supervisorService';
-import { adminService } from '../services/adminService';
 import Card, { CardHeader, CardContent } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -98,11 +97,6 @@ export default function RouteConfig() {
       queryClient.invalidateQueries({ queryKey: ['promoter-industry-assignments'] });
       setIndustryModal(null);
     },
-  });
-
-  const redoGrantMutation = useMutation({
-    mutationFn: ({ promoterId, storeId }: { promoterId: string; storeId: string }) =>
-      adminService.createPromoterStoreRedoGrant(promoterId, storeId),
   });
 
   const addMutation = useMutation({
@@ -493,36 +487,6 @@ export default function RouteConfig() {
                                         >
                                           Indústrias
                                         </button>
-
-                                        {isAdmin && (
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              if (
-                                                confirm(
-                                                  `Permitir que ${route.promoter.name} faça uma nova visita em "${s.store.name}" hoje (mesmo já tendo finalizado)?`
-                                                )
-                                              ) {
-                                                redoGrantMutation.mutate(
-                                                  { promoterId: route.promoter.id, storeId: s.store.id },
-                                                  {
-                                                    onSuccess: (data) => {
-                                                      alert(data?.message || 'Concessão criada.');
-                                                    },
-                                                    onError: () => {
-                                                      alert('Não foi possível criar a concessão.');
-                                                    },
-                                                  }
-                                                );
-                                              }
-                                            }}
-                                            disabled={redoGrantMutation.isPending}
-                                            className="px-2 py-0.5 rounded text-xs bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors disabled:opacity-50"
-                                            title="Admin: permite nova visita na mesma loja no mesmo dia"
-                                          >
-                                            Refazer loja
-                                          </button>
-                                        )}
 
                                         <button
                                           onClick={(e) => {

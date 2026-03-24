@@ -18,6 +18,7 @@ import IndustryCoverage from './pages/IndustryCoverage';
 import StoreIndustriesConfig from './pages/StoreIndustriesConfig';
 import IndustryOwnerDashboard from './pages/IndustryOwnerDashboard';
 import Admin from './pages/Admin';
+import PromoterOpsSupport from './pages/PromoterOpsSupport';
 import Layout from './components/Layout';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -174,6 +175,14 @@ function AppRoutes() {
           element={
             <AdminRoute>
               <Admin />
+            </AdminRoute>
+          }
+        />
+        <RouterRoute
+          path="admin/promoter-correcoes"
+          element={
+            <AdminRoute>
+              <PromoterOpsSupport />
             </AdminRoute>
           }
         />
