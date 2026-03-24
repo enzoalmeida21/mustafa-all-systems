@@ -13,6 +13,8 @@
     "dev:backend": "cd backend && npm run dev",
     "dev:web": "cd web && npm run dev",
     "install:all": "npm install && cd mobile && npm install && cd ../backend && npm install && cd ../web && npm install"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.100.0"
   }
 }
-

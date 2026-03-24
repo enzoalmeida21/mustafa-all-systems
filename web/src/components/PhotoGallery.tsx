@@ -170,6 +170,12 @@ export default function PhotoGallery({
   }
 
   const currentPhoto = allPhotos[currentIndex];
+  const envioStr = currentPhoto.createdAt
+    ? new Date(currentPhoto.createdAt).toLocaleString('pt-BR')
+    : '—';
+  const industriaStr = currentPhoto.industryLabel || '—';
+  const lojaStr = storeName || '—';
+  const promotorStr = promoterName || '—';
 
   const goToPrevious = () => {
     setCurrentIndex((prev) => (prev === 0 ? allPhotos.length - 1 : prev - 1));
@@ -202,7 +208,6 @@ export default function PhotoGallery({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   return (
@@ -269,7 +274,7 @@ export default function PhotoGallery({
 
           {/* Photo */}
           <div className="flex-1 flex items-center justify-center p-8">
-            <div className="relative max-w-full max-h-[60vh]">
+            <div className="max-w-full max-h-[60vh] w-full flex items-center justify-center">
               <img
                 src={currentPhoto.url}
                 alt={currentPhoto.label}
@@ -308,22 +313,35 @@ export default function PhotoGallery({
                   });
                 }}
               />
-              <div className="absolute bottom-0 left-0 right-0 bg-black/75 px-3 py-2 text-xs text-white flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5">
-                <span><span className="text-white/70">Indústria:</span> {currentPhoto.industryLabel}</span>
-                <span><span className="text-white/70">Loja:</span> {storeName || '—'}</span>
-                <span><span className="text-white/70">Promotor:</span> {promoterName || '—'}</span>
-                <span><span className="text-white/70">Envio:</span> {currentPhoto.createdAt ? new Date(currentPhoto.createdAt).toLocaleString('pt-BR') : '—'}</span>
-                {currentPhoto.latitude != null && currentPhoto.longitude != null && (
-                  <a
-                    href={`https://www.google.com/maps?q=${currentPhoto.latitude},${currentPhoto.longitude}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary-300 hover:text-primary-200 hover:underline"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    Ver no mapa
-                  </a>
-                )}
+            </div>
+
+            {/* Etiquetas compactas (2 linhas) - ficam abaixo da foto para não obstruir */}
+            <div className="w-full px-2">
+              <div className="bg-black/75 rounded-lg px-3 py-2 text-xs text-white">
+                <div className="truncate whitespace-nowrap">
+                  <span className="text-white/70">Indústria:</span> {industriaStr}
+                  <span className="text-white/50"> | </span>
+                  <span className="text-white/70">Loja:</span> {lojaStr}
+                </div>
+                <div className="mt-0.5 truncate whitespace-nowrap">
+                  <span className="text-white/70">Promotor:</span> {promotorStr}
+                  <span className="text-white/50"> | </span>
+                  <span className="text-white/70">Envio:</span> {envioStr}
+                  {currentPhoto.latitude != null && currentPhoto.longitude != null && (
+                    <>
+                      <span className="text-white/50"> | </span>
+                      <a
+                        href={`https://www.google.com/maps?q=${currentPhoto.latitude},${currentPhoto.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-300 hover:text-primary-200 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Ver no mapa
+                      </a>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
