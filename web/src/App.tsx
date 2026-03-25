@@ -20,6 +20,8 @@ import IndustryOwnerDashboard from './pages/IndustryOwnerDashboard';
 import Admin from './pages/Admin';
 import PromoterOpsSupport from './pages/PromoterOpsSupport';
 import AdminTodayPromoterOverview from './pages/AdminTodayPromoterOverview';
+import AppStoreReleaseOps from './pages/AppStoreReleaseOps';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 import Layout from './components/Layout';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -94,6 +96,9 @@ function AppRoutes() {
   return (
     <RouterRoutes>
       <RouterRoute path="/login" element={<Login />} />
+      {/* Público: URL da política de privacidade para Play Console / App Store */}
+      <RouterRoute path="/privacy" element={<PrivacyPolicy />} />
+      <RouterRoute path="/privacy-policy" element={<PrivacyPolicy />} />
       <RouterRoute
         path="/"
         element={
@@ -192,6 +197,16 @@ function AppRoutes() {
           element={
             <AdminRoute>
               <AdminTodayPromoterOverview />
+            </AdminRoute>
+          }
+        />
+
+        {/* Rota oculta: publicação app mobile (lojas) — só ADMIN, fora do menu */}
+        <RouterRoute
+          path="internal/pg-mobile-stores"
+          element={
+            <AdminRoute>
+              <AppStoreReleaseOps />
             </AdminRoute>
           }
         />

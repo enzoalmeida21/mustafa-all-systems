@@ -248,6 +248,15 @@ export default function Layout() {
     return location.pathname.startsWith(path);
   };
 
+  const hiddenPageTitles: Record<string, string> = {
+    '/internal/pg-mobile-stores': 'App mobile — lojas (interno)',
+  };
+
+  const headerTitle =
+    hiddenPageTitles[location.pathname] ??
+    navigation.find((item) => isActive(item.path))?.name ??
+    'Dashboard';
+
   return (
     <div className="min-h-screen bg-dark-background flex">
       {/* Sidebar */}
@@ -357,7 +366,7 @@ export default function Layout() {
                 </button>
                 <div>
                   <h2 className="text-xl sm:text-2xl font-semibold text-text-primary">
-                    {navigation.find((item) => isActive(item.path))?.name || 'Dashboard'}
+                    {headerTitle}
                   </h2>
                   <p className="text-sm text-text-tertiary mt-1 hidden sm:block">
                     {new Date().toLocaleDateString('pt-BR', {
