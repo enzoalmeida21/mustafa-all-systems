@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { visitService } from '../services/visitService';
@@ -23,32 +23,32 @@ interface DailySummary {
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeNavigation>();
-  const { visit: localVisit, isActiveVisit, pendingPhotosCount, pendingSurveysCount, clearVisit } = useVisitFlow();
+  const {
+    visit: localVisit,
+    isActiveVisit,
+    loading: visitFlowLoading,
+    pendingPhotosCount,
+    pendingSurveysCount,
+    clearVisit,
+    syncFromServerCurrentVisit,
+  } = useVisitFlow();
+  const isActiveVisitRef = useRef(isActiveVisit);
+  useEffect(() => {
+    isActiveVisitRef.current = isActiveVisit;
+  }, [isActiveVisit]);
+
   const [hasActiveVisit, setHasActiveVisit] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [dailySummary, setDailySummary] = useState<DailySummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
 
-  useEffect(() => {
-    checkActiveVisit();
-    loadDailySummary();
-    offlineSyncService.syncAll().catch(() => {});
-    
-    const unsubscribe = navigation.addListener('focus', () => {
-      checkActiveVisit();
-      loadDailySummary();
-      offlineSyncService.syncAll().catch(() => {});
-    });
-    
-    return unsubscribe;
-  }, [navigation]);
-
-  async function checkActiveVisit() {
+  const checkActiveVisit = useCallback(async () => {
     try {
       setLoading(true);
       const response = await visitService.getCurrentVisit();
       if (response.visit) {
         setHasActiveVisit(true);
+        await syncFromServerCurrentVisit(response.visit);
       } else {
         setHasActiveVisit(false);
         try {
@@ -56,19 +56,29 @@ export default function HomeScreen() {
         } catch (_) {}
       }
     } catch (error: any) {
-      if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
-        setHasActiveVisit(isActiveVisit);
-      } else {
-        console.warn('[HomeScreen] Erro ao verificar visita ativa:', error?.message || error);
-        setHasActiveVisit(false);
-        try {
-          await clearVisit();
-        } catch (_) {}
-      }
+      console.warn('[HomeScreen] Erro ao verificar visita ativa:', error?.message || error);
+      // Erro de rede ou servidor: não apagar estado local nem forçar "sem visita"
+      setHasActiveVisit(isActiveVisitRef.current);
     } finally {
       setLoading(false);
     }
-  }
+  }, [clearVisit, syncFromServerCurrentVisit]);
+
+  useEffect(() => {
+    if (visitFlowLoading) return;
+    checkActiveVisit();
+    loadDailySummary();
+    offlineSyncService.syncAll().catch(() => {});
+
+    const unsubscribe = navigation.addListener('focus', () => {
+      if (visitFlowLoading) return;
+      checkActiveVisit();
+      loadDailySummary();
+      offlineSyncService.syncAll().catch(() => {});
+    });
+
+    return unsubscribe;
+  }, [navigation, visitFlowLoading, checkActiveVisit]);
 
   async function loadDailySummary() {
     try {
@@ -92,7 +102,7 @@ export default function HomeScreen() {
     navigation.navigate('ActiveVisit');
   }
 
-  if (loading || hasActiveVisit === null) {
+  if (visitFlowLoading || loading || hasActiveVisit === null) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color={colors.primary[600]} />

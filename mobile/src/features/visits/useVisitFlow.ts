@@ -18,7 +18,21 @@ import {
   getPendingPhotosForSync,
   getPendingSurveysForSync,
   migrateLegacyVisit,
+  migrateVisitStorageToServerId,
 } from './visitFlowStorage';
+
+/** Resposta de GET /promoters/current-visit (campos usados no app). */
+export interface ServerCurrentVisitPayload {
+  id: string;
+  store: {
+    id: string;
+    name: string;
+    address?: string | null;
+  };
+  checkInAt: string;
+  checkInLatitude?: number | null;
+  checkInLongitude?: number | null;
+}
 
 let _useAuth: (() => { user: { id: string } | null }) | undefined;
 try {
@@ -46,6 +60,7 @@ interface UseVisitFlowReturn {
   addSurvey: (survey: LocalPriceSurvey) => Promise<void>;
   refreshData: () => Promise<void>;
   clearVisit: () => Promise<void>;
+  syncFromServerCurrentVisit: (serverVisit: ServerCurrentVisitPayload) => Promise<void>;
   isActiveVisit: boolean;
 }
 
@@ -62,6 +77,11 @@ export function useVisitFlow(): UseVisitFlowReturn {
 
   useEffect(() => {
     if (!currentUserId) {
+      initialized.current = false;
+      lastUserId.current = null;
+      setVisit(null);
+      setPhotos([]);
+      setSurveys([]);
       setLoading(false);
       return;
     }
@@ -237,12 +257,63 @@ export function useVisitFlow(): UseVisitFlowReturn {
     setSurveys([]);
   }, [currentUserId]);
 
+  const syncFromServerCurrentVisit = useCallback(
+    async (serverVisit: ServerCurrentVisitPayload) => {
+      if (!currentUserId) return;
+      const existing = await getActiveVisit(currentUserId);
+      const oldVisitId =
+        existing && existing.visitId !== serverVisit.id ? existing.visitId : null;
+      if (oldVisitId) {
+        await migrateVisitStorageToServerId(oldVisitId, serverVisit.id);
+      }
+
+      const checkInRaw = serverVisit.checkInAt;
+      const checkInIso =
+        typeof checkInRaw === 'string'
+          ? checkInRaw
+          : new Date(checkInRaw as unknown as Date).toISOString();
+      const date = checkInIso.split('T')[0];
+
+      const pendingPhotos = await getPendingPhotosForSync(serverVisit.id);
+      const pendingSurveys = await getPendingSurveysForSync(serverVisit.id);
+      const hasPendingSync = pendingPhotos.length > 0 || pendingSurveys.length > 0;
+
+      const local: LocalVisit = {
+        visitId: serverVisit.id,
+        promoterId: currentUserId,
+        storeId: serverVisit.store.id,
+        storeName: serverVisit.store.name,
+        storeAddress: serverVisit.store.address ?? '',
+        date,
+        status: 'working',
+        checkinAt: checkInIso,
+        checkoutAt: null,
+        checkinLatitude: serverVisit.checkInLatitude ?? null,
+        checkinLongitude: serverVisit.checkInLongitude ?? null,
+        checkoutLatitude: null,
+        checkoutLongitude: null,
+        hasPendingSync: hasPendingSync || (existing?.hasPendingSync ?? false),
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await saveActiveVisit(local);
+      setVisit(local);
+      const [storedPhotos, storedSurveys] = await Promise.all([
+        getPhotos(local.visitId),
+        getSurveys(local.visitId),
+      ]);
+      setPhotos(storedPhotos);
+      setSurveys(storedSurveys);
+    },
+    [currentUserId]
+  );
+
   const pendingPhotosCount = photos.filter(
-    (p) => p.syncStatus === 'pending' || p.syncStatus === 'error'
+    (p: LocalPhoto) => p.syncStatus === 'pending' || p.syncStatus === 'error'
   ).length;
 
   const pendingSurveysCount = surveys.filter(
-    (s) => s.syncStatus === 'pending' || s.syncStatus === 'error'
+    (s: LocalPriceSurvey) => s.syncStatus === 'pending' || s.syncStatus === 'error'
   ).length;
 
   return {
@@ -261,6 +332,7 @@ export function useVisitFlow(): UseVisitFlowReturn {
     addSurvey: addSurveyToVisit,
     refreshData,
     clearVisit: clearVisitFn,
+    syncFromServerCurrentVisit,
     isActiveVisit: visit !== null && visit.status !== 'idle' && visit.status !== 'checkedOut',
   };
 }

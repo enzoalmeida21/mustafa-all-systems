@@ -1,4 +1,5 @@
 export { useVisitFlow } from './useVisitFlow';
+export type { ServerCurrentVisitPayload } from './useVisitFlow';
 export type {
   VisitStatus,
   SyncStatus,

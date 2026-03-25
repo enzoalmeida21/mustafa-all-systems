@@ -60,9 +60,18 @@ type ActiveVisitNavigation = NavigationProp<Record<string, object | undefined>>;
 export default function ActiveVisitScreen({ route }: any) {
   const navigation = useNavigation<ActiveVisitNavigation>();
   const { visit: initialVisit } = route.params || {};
-  const { setWorking, pendingPhotosCount, pendingSurveysCount, clearVisit } = useVisitFlow();
+  const {
+    visit: localVisit,
+    isActiveVisit,
+    setWorking,
+    pendingPhotosCount,
+    pendingSurveysCount,
+    clearVisit,
+    syncFromServerCurrentVisit,
+  } = useVisitFlow();
   const [visit, setVisit] = useState<Visit | null>(initialVisit);
   const [loadingVisit, setLoadingVisit] = useState(!initialVisit);
+  const [visitLoadError, setVisitLoadError] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [photos, setPhotos] = useState<VisitPhoto[]>([]);
@@ -78,9 +87,14 @@ export default function ActiveVisitScreen({ route }: any) {
 
   useEffect(() => {
     loadCurrentVisit();
-    restorePendingPhotos();
     setWorking().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (visit?.id) {
+      restorePendingPhotos();
+    }
+  }, [visit?.id]);
 
   useEffect(() => {
     if (visit?.id && visit?.store?.id) {
@@ -162,11 +176,32 @@ export default function ActiveVisitScreen({ route }: any) {
     }
   }
 
+  function buildVisitFromLocal(lv: {
+    visitId: string;
+    storeId: string;
+    storeName: string;
+    storeAddress: string;
+    checkinAt: string | null;
+  }): Visit {
+    return {
+      id: lv.visitId,
+      store: {
+        id: lv.storeId,
+        name: lv.storeName,
+        address: lv.storeAddress,
+      },
+      checkInAt: lv.checkinAt || new Date().toISOString(),
+      photos: [],
+    };
+  }
+
   async function loadCurrentVisit() {
     try {
       setLoadingVisit(true);
+      setVisitLoadError(false);
       const response = await visitService.getCurrentVisit();
       if (response.visit) {
+        await syncFromServerCurrentVisit(response.visit);
         setVisit(response.visit);
         const workPhotos = (response.visit.photos || [])
           .filter((photo: Visit['photos'][number]) =>
@@ -186,9 +221,15 @@ export default function ActiveVisitScreen({ route }: any) {
       }
     } catch (error) {
       console.error('Error loading visit:', error);
-      await clearVisit();
-      setVisit(null);
-      navigation.navigate('Stores');
+      if (initialVisit) {
+        setVisit(initialVisit);
+        setVisitLoadError(false);
+      } else if (localVisit && isActiveVisit) {
+        setVisit(buildVisitFromLocal(localVisit));
+        setVisitLoadError(false);
+      } else {
+        setVisitLoadError(true);
+      }
     } finally {
       setLoadingVisit(false);
     }
@@ -666,6 +707,28 @@ export default function ActiveVisitScreen({ route }: any) {
   }
 
   if (!visit) {
+    if (visitLoadError) {
+      return (
+        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+          <Text style={[styles.title, { textAlign: 'center' }]}>Não foi possível sincronizar</Text>
+          <Text style={[styles.subtitle, { textAlign: 'center', marginTop: 12 }]}>
+            Verifique a conexão e tente novamente. Seu progresso local foi preservado quando disponível.
+          </Text>
+          <TouchableOpacity
+            style={[styles.navButton, styles.primaryButton, { marginTop: 24, alignSelf: 'stretch' }]}
+            onPress={() => loadCurrentVisit()}
+          >
+            <Text style={styles.navButtonText}>Tentar novamente</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.navButton, { marginTop: 12, backgroundColor: colors.dark.cardElevated }]}
+            onPress={() => navigation.navigate('Stores')}
+          >
+            <Text style={styles.navButtonText}>Ir para lojas</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color={colors.primary[600]} />

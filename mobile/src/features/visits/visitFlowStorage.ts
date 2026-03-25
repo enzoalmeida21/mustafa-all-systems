@@ -132,6 +132,23 @@ export async function clearSurveys(visitId: string): Promise<void> {
   await AsyncStorage.removeItem(surveysKey(visitId));
 }
 
+/** Quando o backend devolve o UUID real e o app ainda tinha chave local (ex.: pré-check-in), move fotos/pesquisas. */
+export async function migrateVisitStorageToServerId(
+  oldVisitId: string,
+  newVisitId: string
+): Promise<void> {
+  if (oldVisitId === newVisitId) return;
+  const photos = await getPhotos(oldVisitId);
+  const surveys = await getSurveys(oldVisitId);
+  if (photos.length === 0 && surveys.length === 0) return;
+  const migratedPhotos = photos.map((p) => ({ ...p, visitId: newVisitId }));
+  const migratedSurveys = surveys.map((s) => ({ ...s, visitId: newVisitId }));
+  await savePhotos(newVisitId, migratedPhotos);
+  await saveSurveys(newVisitId, migratedSurveys);
+  await clearPhotos(oldVisitId);
+  await clearSurveys(oldVisitId);
+}
+
 // ── Pending sync discovery ──
 
 export async function getAllPendingVisitIds(): Promise<string[]> {
