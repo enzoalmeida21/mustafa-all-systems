@@ -65,8 +65,8 @@
       ]
     ],
     "extra": {
-      "apiUrl": "https://promo-gestao-backend.onrender.com/api",
-      "EXPO_PUBLIC_API_URL": "https://promo-gestao-backend.onrender.com/api",
+      "apiUrl": "https://gestaomustafa-1021788471298.us-central1.run.app/api",
+      "EXPO_PUBLIC_API_URL": "https://gestaomustafa-1021788471298.us-central1.run.app/api",
       "eas": {
         "projectId": "ec7a3510-8d52-4352-bb9d-3362ffacb03f"
       }
