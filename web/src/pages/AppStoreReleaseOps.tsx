@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import Card, { CardHeader, CardContent } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 
-const PRIVACY_PATH = '/privacy';
+/** URL estática (sempre funciona em S3). A rota /privacy depende do SPA (CloudFront). */
+const PRIVACY_STATIC = '/privacy.html';
+const PRIVACY_SPA = '/privacy';
 
 /**
  * Página interna (rota oculta): checklist e referência para Play Store / App Store / EAS.
@@ -54,16 +56,18 @@ export default function AppStoreReleaseOps() {
     }
   }, []);
 
-  const privacyFullUrl =
-    privacyPageOrigin ? `${privacyPageOrigin}${PRIVACY_PATH}` : `https://SEU_DOMINIO${PRIVACY_PATH}`;
+  const privacyStaticUrl =
+    privacyPageOrigin ? `${privacyPageOrigin}${PRIVACY_STATIC}` : `https://SEU_DOMINIO${PRIVACY_STATIC}`;
+  const privacySpaUrl =
+    privacyPageOrigin ? `${privacyPageOrigin}${PRIVACY_SPA}` : `https://SEU_DOMINIO${PRIVACY_SPA}`;
 
   async function copyPrivacyUrl() {
     try {
-      await navigator.clipboard.writeText(privacyFullUrl);
+      await navigator.clipboard.writeText(privacyStaticUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      window.prompt('Copie a URL:', privacyFullUrl);
+      window.prompt('Copie a URL:', privacyStaticUrl);
     }
   }
 
@@ -141,38 +145,53 @@ export default function AppStoreReleaseOps() {
               </li>
               <li>
                 No Play Console → seu app → <strong className="text-text-primary">Política de privacidade</strong>,
-                cole o link abaixo (ou o equivalente após o deploy).
+                cole a URL <strong className="text-text-primary">{PRIVACY_STATIC}</strong> (estática, recomendada em
+                S3) — veja o campo abaixo.
               </li>
               <li>
                 Preencha o questionário de <strong className="text-text-primary">segurança dos dados</strong> / declarações
                 de coleta de dados de forma coerente com o que o app realmente faz (câmera, localização, conta, etc.).
               </li>
               <li>
-                <strong className="text-text-primary">Menores de 13:</strong> o texto padrão em /privacy declara que o
+                <strong className="text-text-primary">Menores de 13:</strong> o texto em {PRIVACY_STATIC} declara que o
                 app não é direcionado a crianças. Se você marcar público infantil na Play Console, revise políticas
                 Family (Google Play) e obtenha assessoria jurídica.
               </li>
             </ol>
           </div>
 
+          <div className="rounded-lg border border-dark-border bg-dark-card/40 p-3 text-xs text-text-tertiary">
+            <strong className="text-text-secondary">Deploy em S3 + CloudFront:</strong> caminhos como{' '}
+            <code className="text-primary-400">{PRIVACY_SPA}</code> só carregam o React se o CloudFront entregar{' '}
+            <code className="text-primary-400">index.html</code> para erros 403/404. Caso contrário, a página fica em
+            branco. Use <code className="text-primary-400">{PRIVACY_STATIC}</code> na Play Console ou configure o SPA
+            conforme <code className="text-primary-400">docs/infra/SPA_S3_CLOUDFRONT.md</code> no repositório.
+          </div>
+
           <div>
-            <p className="text-sm text-text-tertiary mb-2">URL para colar na Play Console</p>
+            <p className="text-sm text-text-tertiary mb-2">URL recomendada para a Play Console (estática)</p>
             <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
               <code className="flex-1 px-3 py-2 rounded-lg bg-dark-card border border-dark-border text-xs text-primary-300 break-all">
-                {privacyFullUrl}
+                {privacyStaticUrl}
               </code>
               <Button type="button" variant="outline" size="sm" onClick={copyPrivacyUrl}>
                 {copied ? 'Copiado!' : 'Copiar URL'}
               </Button>
             </div>
             <p className="text-xs text-text-tertiary mt-2">
+              Rota SPA (após CloudFront configurado):{' '}
+              <a href={PRIVACY_SPA} target="_blank" rel="noopener noreferrer" className="text-primary-400 hover:underline break-all">
+                {privacySpaUrl}
+              </a>
+            </p>
+            <p className="text-xs text-text-tertiary mt-2">
               <a
-                href={PRIVACY_PATH}
+                href={PRIVACY_STATIC}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary-400 hover:underline"
               >
-                Abrir política em nova aba
+                Abrir política (estática) em nova aba
               </a>
             </p>
           </div>

@@ -27,7 +27,7 @@ export default function PrivacyPolicy() {
           <p className="mt-1 text-text-tertiary text-xs">Última atualização: {updated}</p>
         </header>
 
-        <div className="prose prose-invert max-w-none space-y-8 text-sm leading-relaxed text-text-secondary">
+        <div className="max-w-none space-y-8 text-sm leading-relaxed text-text-secondary">
           <section className="space-y-3">
             <h2 className="text-lg font-semibold text-text-primary">1. Introdução</h2>
             <p>
