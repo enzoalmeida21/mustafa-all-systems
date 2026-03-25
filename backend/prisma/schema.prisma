@@ -24,6 +24,15 @@ enum PhotoType {
   OTHER
 }
 
+enum IndustryMissReason {
+  STORE_CLOSED
+  NO_STOCK
+  NO_AUTHORIZATION
+  NO_MATERIAL
+  PROMOTER_ERROR
+  OTHER
+}
+
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
@@ -41,6 +50,7 @@ model User {
   routeAssignments      RouteAssignment[]
   industryAssignments   IndustryAssignment[]
   photoIndustries       PhotoIndustry[]
+  industryMisses        IndustryMiss[]
   informationDistributions InformationDistribution[]
   whatsappReports       WhatsAppReport[]
   supervisorRegions     SupervisorRegion[]
@@ -89,6 +99,7 @@ model Store {
   routeAssignments      RouteAssignment[]
   industryAssignments   IndustryAssignment[]
   photoIndustries       PhotoIndustry[]
+  industryMisses        IndustryMiss[]
   informationDistributions InformationDistribution[]
   storeIndustries       StoreIndustry[]
   promoterStoreRedoGrants PromoterStoreRedoGrant[]
@@ -116,10 +127,33 @@ model Visit {
   priceResearch  PriceResearch[]
   locations      Location[]
   photoIndustries PhotoIndustry[]
+  industryMisses IndustryMiss[]
 
   @@index([promoterId])
   @@index([storeId])
   @@index([checkInAt])
+}
+
+model IndustryMiss {
+  id         String   @id @default(uuid())
+  visitId    String
+  promoterId String
+  storeId    String
+  industryId String
+  reason     IndustryMissReason
+  note       String?
+  createdAt  DateTime @default(now())
+
+  visit    Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  promoter User     @relation(fields: [promoterId], references: [id], onDelete: Cascade)
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  industry Industry  @relation(fields: [industryId], references: [id], onDelete: Cascade)
+
+  @@unique([visitId, industryId])
+  @@index([promoterId, createdAt])
+  @@index([storeId, createdAt])
+  @@index([industryId, createdAt])
+  @@index([visitId])
 }
 
 model Photo {
@@ -238,6 +272,7 @@ model Industry {
   // Relations
   products            Product[]
   photoIndustries     PhotoIndustry[]
+  industryMisses      IndustryMiss[]
   industryAssignments IndustryAssignment[]
   informationDistributions InformationDistribution[]
   whatsappReports     WhatsAppReport[]

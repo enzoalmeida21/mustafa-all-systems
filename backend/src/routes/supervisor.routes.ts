@@ -11,6 +11,7 @@ import {
   getMyStates,
   getPendingOverview,
   getScopedPromoters,
+  getPromoterMissHistory,
 } from '../controllers/supervisor.controller';
 import { getPromoters } from '../controllers/promoters.controller';
 import { downloadExport, getExportStatus } from '../controllers/export.controller';
@@ -49,6 +50,7 @@ router.get('/pending-overview', requireSupervisor, getPendingOverview);
 router.get('/promoters', requireSupervisor, getScopedPromoters);
 router.get('/promoters/:id/performance', requireSupervisor, getPromoterPerformance);
 router.get('/promoters/:id/visits', requireSupervisor, getPromoterVisits);
+router.get('/promoters/:id/miss-history', requireSupervisor, getPromoterMissHistory);
 router.get('/promoters/:id/route', requireSupervisor, getPromoterRoute); // Rota histórica (visitas do dia)
 router.get('/missing-photos', requireSupervisor, getMissingPhotos);
 router.get('/pending-industries', requireSupervisor, getPendingIndustries);

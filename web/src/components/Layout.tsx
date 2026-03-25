@@ -226,6 +226,8 @@ export default function Layout() {
       ? [
           { name: 'Indústrias', path: '/industries', icon: AdminIndustriesIcon },
           { name: 'Cobertura', path: '/industries/coverage', icon: ReportsIcon },
+          { name: 'Hoje (Promotores)', path: '/admin/promoters/today', icon: ReportsIcon },
+          { name: 'Correções promotor', path: '/admin/promoter-correcoes', icon: PromoterOpsIcon },
           { name: 'Administração', path: '/admin', icon: AdminIcon },
         ]
       : []),

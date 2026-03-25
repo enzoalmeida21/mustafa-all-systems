@@ -11,6 +11,7 @@ import {
   setPromoterSupervisors,
   getPromoterSupervisors,
   createPromoterStoreRedoGrant,
+  getAdminTodayPromoterOverview,
 } from '../controllers/admin.controller';
 import { authenticate, requireAdmin } from '../middleware/auth';
 
@@ -36,6 +37,8 @@ router.post(
   requireAdmin,
   createPromoterStoreRedoGrant
 );
+
+router.get('/promoters/today-overview', authenticate, requireAdmin, getAdminTodayPromoterOverview);
 
 export default router;
 

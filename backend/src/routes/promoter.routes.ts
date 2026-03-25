@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   checkIn,
   checkOut,
+  justifyMissingIndustries,
   uploadPhotos,
   submitPriceResearch,
   getCurrentVisit,
@@ -20,6 +21,7 @@ router.get('/stores', getStores);
 router.get('/visits', getVisits);
 router.post('/checkin', checkIn);
 router.post('/checkout', checkOut);
+router.post('/visits/:visitId/justify-missing-industries', justifyMissingIndustries);
 router.post('/photos', uploadPhotos);
 router.post('/price-research', submitPriceResearch);
 router.get('/current-visit', getCurrentVisit);

@@ -1054,6 +1054,79 @@ export async function getPendingOverview(req: AuthRequest, res: Response) {
 }
 
 /**
+ * Histórico de faltas por promotor (indústrias não fotografadas, com justificativa).
+ * GET /supervisors/promoters/:id/miss-history?days=30
+ */
+export async function getPromoterMissHistory(req: AuthRequest, res: Response) {
+  try {
+    const { id: promoterId } = req.params;
+    const days = Math.min(Math.max(parseInt((req.query.days as string) || '30', 10) || 30, 1), 180);
+
+    // Escopo: supervisor só vê promotores do seu escopo (ou admin via requireSupervisor)
+    // getScopedPromoters já implementa regra, então reaproveitamos a mesma lógica via query.
+    const requesterId = req.userId!;
+    const requesterRole = req.userRole;
+
+    if (requesterRole !== UserRole.ADMIN) {
+      const allowed = await prisma.user.count({
+        where: {
+          id: promoterId,
+          role: UserRole.PROMOTER,
+          OR: [
+            { promoterSupervisors: { some: { supervisorId: requesterId } } },
+            { routeAssignments: { some: { supervisorId: requesterId, isActive: true } } },
+          ],
+        },
+      });
+      if (!allowed) return res.status(403).json({ message: 'Acesso não autorizado' });
+    }
+
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+
+    const misses = await prisma.industryMiss.findMany({
+      where: { promoterId, createdAt: { gte: start } },
+      include: {
+        store: { select: { id: true, name: true, state: true } },
+        industry: { select: { id: true, name: true, abbreviation: true, code: true } },
+        visit: { select: { id: true, checkInAt: true, checkOutAt: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+    });
+
+    // Agregar por dia para KPI simples
+    const byDay = new Map<string, number>();
+    for (const m of misses) {
+      const day = m.createdAt.toISOString().slice(0, 10);
+      byDay.set(day, (byDay.get(day) || 0) + 1);
+    }
+
+    res.json({
+      promoterId,
+      days,
+      start: start.toISOString().slice(0, 10),
+      total: misses.length,
+      byDay: Array.from(byDay.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([date, count]) => ({ date, count })),
+      misses: misses.map((m) => ({
+        id: m.id,
+        createdAt: m.createdAt,
+        reason: m.reason,
+        note: m.note,
+        store: m.store,
+        industry: m.industry,
+        visit: m.visit,
+      })),
+    });
+  } catch (error) {
+    console.error('Get promoter miss history error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
  * Retorna promotores vinculados ao supervisor via PromoterSupervisor
  */
 export async function getScopedPromoters(req: AuthRequest, res: Response) {

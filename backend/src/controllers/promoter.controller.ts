@@ -128,6 +128,123 @@ const checkOutSchema = z.object({
   photoUrl: z.string().url(),
 });
 
+const justifyMissingIndustriesSchema = z.object({
+  items: z.array(
+    z.object({
+      industryId: z.string().uuid(),
+      reason: z.enum([
+        'STORE_CLOSED',
+        'NO_STOCK',
+        'NO_AUTHORIZATION',
+        'NO_MATERIAL',
+        'PROMOTER_ERROR',
+        'OTHER',
+      ]),
+      note: z.string().max(500).optional(),
+    })
+  ).min(1),
+});
+
+async function getRequiredIndustryIdsForVisit(visitId: string) {
+  const visit = await prisma.visit.findUnique({
+    where: { id: visitId },
+    select: {
+      id: true,
+      promoterId: true,
+      storeId: true,
+      store: {
+        select: {
+          storeIndustries: {
+            where: { isActive: true },
+            select: { industryId: true },
+          },
+        },
+      },
+    },
+  });
+  if (!visit) return null;
+
+  const assignments = await prisma.industryAssignment.findMany({
+    where: { promoterId: visit.promoterId, storeId: visit.storeId, isActive: true },
+    select: { industryId: true },
+  });
+
+  const required = assignments.length > 0
+    ? assignments.map(a => a.industryId)
+    : visit.store.storeIndustries.map(si => si.industryId);
+
+  return { visit, requiredIds: Array.from(new Set(required)) };
+}
+
+async function getCoveredIndustryIdsForVisit(visitId: string) {
+  const photosWithIndustry = await prisma.photoIndustry.findMany({
+    where: { visitId },
+    select: { industryId: true },
+  });
+  return new Set(photosWithIndustry.map(p => p.industryId));
+}
+
+async function getPendingIndustryIdsForVisit(visitId: string) {
+  const requiredData = await getRequiredIndustryIdsForVisit(visitId);
+  if (!requiredData) return null;
+  const coveredIds = await getCoveredIndustryIdsForVisit(visitId);
+  const pendingIds = requiredData.requiredIds.filter((id) => !coveredIds.has(id));
+  return { ...requiredData, coveredIds, pendingIds };
+}
+
+export async function justifyMissingIndustries(req: AuthRequest, res: Response) {
+  try {
+    const { visitId } = req.params;
+    const promoterId = req.userId!;
+    const { items } = justifyMissingIndustriesSchema.parse(req.body);
+
+    const visit = await prisma.visit.findFirst({
+      where: { id: visitId, promoterId },
+      select: { id: true, promoterId: true, storeId: true, checkOutAt: true },
+    });
+    if (!visit) return res.status(404).json({ message: 'Visita não encontrada' });
+    if (visit.checkOutAt) return res.status(400).json({ message: 'Visita já foi finalizada' });
+
+    const pendingData = await getPendingIndustryIdsForVisit(visitId);
+    if (!pendingData) return res.status(404).json({ message: 'Visita não encontrada' });
+
+    const pendingSet = new Set(pendingData.pendingIds);
+    const uniqueItems = new Map<string, { reason: any; note?: string }>();
+    for (const it of items) uniqueItems.set(it.industryId, { reason: it.reason, note: it.note });
+
+    // Só permitir justificar o que realmente está pendente
+    const invalid = Array.from(uniqueItems.keys()).filter((id) => !pendingSet.has(id));
+    if (invalid.length > 0) {
+      return res.status(400).json({ message: 'Algumas indústrias informadas não estão pendentes nesta visita.' });
+    }
+
+    const writes = Array.from(uniqueItems.entries()).map(([industryId, payload]) =>
+      prisma.industryMiss.upsert({
+        where: { visitId_industryId: { visitId, industryId } },
+        update: { reason: payload.reason, note: payload.note ?? null },
+        create: {
+          visitId,
+          promoterId,
+          storeId: visit.storeId,
+          industryId,
+          reason: payload.reason,
+          note: payload.note ?? null,
+        },
+      })
+    );
+
+    await prisma.$transaction(writes);
+
+    res.json({ message: 'Justificativas registradas.' });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: 'Validation error', errors: error.errors });
+    }
+    console.error('Justify missing industries error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
 export async function checkOut(req: AuthRequest, res: Response) {
   try {
     const { visitId, latitude, longitude, photoUrl } = checkOutSchema.parse(req.body);
@@ -147,6 +264,41 @@ export async function checkOut(req: AuthRequest, res: Response) {
 
     if (visit.checkOutAt) {
       return res.status(400).json({ message: 'Visita já foi finalizada' });
+    }
+
+    // Bloquear checkout se houver indústrias pendentes sem justificativa
+    const pendingData = await getPendingIndustryIdsForVisit(visitId);
+    if (pendingData && pendingData.pendingIds.length > 0) {
+      const existing = await prisma.industryMiss.findMany({
+        where: { visitId, industryId: { in: pendingData.pendingIds } },
+        select: { industryId: true },
+      });
+      const justified = new Set(existing.map((e) => e.industryId));
+      const missingJustification = pendingData.pendingIds.filter((id) => !justified.has(id));
+
+      if (missingJustification.length > 0) {
+        const industries = await prisma.industry.findMany({
+          where: { id: { in: missingJustification } },
+          select: { id: true, name: true, abbreviation: true, code: true },
+          orderBy: { name: 'asc' },
+        });
+
+        return res.status(400).json({
+          code: 'MISSING_INDUSTRY_JUSTIFICATION',
+          message:
+            'Existem indústrias pendentes nesta loja. Para finalizar o checkout, informe uma justificativa para cada indústria não fotografada.',
+          visitId,
+          pendingIndustries: industries,
+          reasonOptions: [
+            { code: 'STORE_CLOSED', label: 'Loja fechada' },
+            { code: 'NO_STOCK', label: 'Sem estoque' },
+            { code: 'NO_AUTHORIZATION', label: 'Sem autorização' },
+            { code: 'NO_MATERIAL', label: 'Sem material' },
+            { code: 'PROMOTER_ERROR', label: 'Erro do promotor' },
+            { code: 'OTHER', label: 'Outro' },
+          ],
+        });
+      }
     }
 
     // Atualizar visita com checkout

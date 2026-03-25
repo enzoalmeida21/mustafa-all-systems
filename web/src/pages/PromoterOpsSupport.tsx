@@ -69,6 +69,7 @@ export default function PromoterOpsSupport() {
       adminService.createPromoterStoreRedoGrant(pid, sid),
   });
 
+
   const selectedPromoterName = promoters.find((p) => p.id === promoterId)?.name;
   const selectedStoreName =
     routeStores.find((s) => s.id === storeId)?.name || allStores.find((s) => s.id === storeId)?.name;

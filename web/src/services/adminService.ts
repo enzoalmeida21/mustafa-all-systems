@@ -133,5 +133,34 @@ export const adminService = {
     const response = await apiClient.post(`/admin/promoters/${promoterId}/stores/${storeId}/redo-grant`);
     return response.data;
   },
+
+  async getAdminTodayOverview(state?: string): Promise<{
+    date: string;
+    states: Array<{
+      state: string;
+      promotersTotal: number;
+      openVisits: number;
+      noVisitToday: number;
+      unjustifiedMisses: number;
+    }>;
+    promoters: Array<{
+      id: string;
+      name: string;
+      email: string;
+      state: string | null;
+      visitsToday: number;
+      hasOpenVisit: boolean;
+      noVisitToday: boolean;
+      unjustifiedMissesToday: number;
+      lastActivityAt: string | null;
+      openVisit: { id: string; checkInAt: string; storeId: string } | null;
+    }>;
+  }> {
+    const params = new URLSearchParams();
+    if (state) params.set('state', state);
+    const qs = params.toString();
+    const response = await apiClient.get(`/admin/promoters/today-overview${qs ? `?${qs}` : ''}`);
+    return response.data;
+  },
 };
 

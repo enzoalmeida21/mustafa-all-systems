@@ -543,3 +543,145 @@ export async function createPromoterStoreRedoGrant(req: AuthRequest, res: Respon
   }
 }
 
+/**
+ * Visão geral do ADMIN (somente hoje), preparada para múltiplos estados.
+ * GET /admin/promoters/today-overview?state=SP
+ */
+export async function getAdminTodayPromoterOverview(req: AuthRequest, res: Response) {
+  try {
+    const { state } = req.query as { state?: string };
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+
+    const promoters = await prisma.user.findMany({
+      where: {
+        role: UserRole.PROMOTER,
+        ...(state ? { state } : {}),
+      },
+      select: { id: true, name: true, email: true, state: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const promoterIds = promoters.map((p) => p.id);
+
+    const visitsToday = await prisma.visit.findMany({
+      where: {
+        promoterId: { in: promoterIds },
+        checkInAt: { gte: todayStart, lt: todayEnd },
+      },
+      select: { id: true, promoterId: true, checkInAt: true, checkOutAt: true, storeId: true },
+      orderBy: { checkInAt: 'asc' },
+    });
+
+    const openVisitByPromoter = new Map<string, { id: string; checkInAt: Date; storeId: string }>();
+    const lastActivityByPromoter = new Map<string, Date>();
+    const visitsCountByPromoter = new Map<string, number>();
+    for (const v of visitsToday) {
+      visitsCountByPromoter.set(v.promoterId, (visitsCountByPromoter.get(v.promoterId) || 0) + 1);
+      const last = v.checkOutAt ?? v.checkInAt;
+      const prev = lastActivityByPromoter.get(v.promoterId);
+      if (!prev || last.getTime() > prev.getTime()) lastActivityByPromoter.set(v.promoterId, last);
+      if (!v.checkOutAt) {
+        openVisitByPromoter.set(v.promoterId, { id: v.id, checkInAt: v.checkInAt, storeId: v.storeId });
+      }
+    }
+
+    // “Falta sem justificativa”: visitas de hoje com checkout completo, mas ainda com indústrias pendentes sem IndustryMiss.
+    // (Com o novo bloqueio de checkout, isso tende a ficar 0, mas fica aqui para consistência e auditoria.)
+    const completedVisitIds = visitsToday.filter((v) => v.checkOutAt != null).map((v) => v.id);
+    const industryMissByVisit = await prisma.industryMiss.findMany({
+      where: { visitId: { in: completedVisitIds } },
+      select: { visitId: true, industryId: true },
+    });
+    const missSetByVisit = new Map<string, Set<string>>();
+    for (const m of industryMissByVisit) {
+      if (!missSetByVisit.has(m.visitId)) missSetByVisit.set(m.visitId, new Set());
+      missSetByVisit.get(m.visitId)!.add(m.industryId);
+    }
+
+    const storeIndustriesByStore = await prisma.storeIndustry.findMany({
+      where: { storeId: { in: visitsToday.map((v) => v.storeId) }, isActive: true },
+      select: { storeId: true, industryId: true },
+    });
+    const reqByStore = new Map<string, string[]>();
+    for (const si of storeIndustriesByStore) {
+      reqByStore.set(si.storeId, [...(reqByStore.get(si.storeId) || []), si.industryId]);
+    }
+
+    const coveredByVisit = await prisma.photoIndustry.findMany({
+      where: { visitId: { in: completedVisitIds } },
+      select: { visitId: true, industryId: true },
+    });
+    const coveredSetByVisit = new Map<string, Set<string>>();
+    for (const c of coveredByVisit) {
+      if (!coveredSetByVisit.has(c.visitId)) coveredSetByVisit.set(c.visitId, new Set());
+      coveredSetByVisit.get(c.visitId)!.add(c.industryId);
+    }
+
+    const unjustifiedByPromoter = new Map<string, number>();
+    for (const v of visitsToday) {
+      if (!v.checkOutAt) continue;
+      const required = reqByStore.get(v.storeId) || [];
+      if (required.length === 0) continue;
+      const covered = coveredSetByVisit.get(v.id) || new Set<string>();
+      const misses = missSetByVisit.get(v.id) || new Set<string>();
+      const pending = required.filter((industryId) => !covered.has(industryId));
+      const pendingWithoutJustification = pending.filter((industryId) => !misses.has(industryId));
+      if (pendingWithoutJustification.length > 0) {
+        unjustifiedByPromoter.set(
+          v.promoterId,
+          (unjustifiedByPromoter.get(v.promoterId) || 0) + pendingWithoutJustification.length
+        );
+      }
+    }
+
+    // Agregar por estado
+    const byState = new Map<string, any>();
+    for (const p of promoters) {
+      const uf = p.state || '—';
+      if (!byState.has(uf)) {
+        byState.set(uf, {
+          state: uf,
+          promotersTotal: 0,
+          openVisits: 0,
+          noVisitToday: 0,
+          unjustifiedMisses: 0,
+        });
+      }
+      const row = byState.get(uf);
+      row.promotersTotal += 1;
+
+      const visitsCount = visitsCountByPromoter.get(p.id) || 0;
+      const hasOpen = openVisitByPromoter.has(p.id);
+      if (hasOpen) row.openVisits += 1;
+      if (visitsCount === 0) row.noVisitToday += 1;
+      row.unjustifiedMisses += unjustifiedByPromoter.get(p.id) || 0;
+    }
+
+    res.json({
+      date: todayStart.toISOString().slice(0, 10),
+      states: Array.from(byState.values()).sort((a, b) => a.state.localeCompare(b.state)),
+      promoters: promoters.map((p) => {
+        const visitsCount = visitsCountByPromoter.get(p.id) || 0;
+        return {
+          id: p.id,
+          name: p.name,
+          email: p.email,
+          state: p.state,
+          visitsToday: visitsCount,
+          hasOpenVisit: openVisitByPromoter.has(p.id),
+          noVisitToday: visitsCount === 0,
+          unjustifiedMissesToday: unjustifiedByPromoter.get(p.id) || 0,
+          lastActivityAt: lastActivityByPromoter.get(p.id)?.toISOString() ?? null,
+          openVisit: openVisitByPromoter.get(p.id) || null,
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Get admin today overview error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}

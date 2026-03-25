@@ -35,6 +35,14 @@ export interface CheckOutRequest {
   photoUrl: string;
 }
 
+export type IndustryMissReason =
+  | 'STORE_CLOSED'
+  | 'NO_STOCK'
+  | 'NO_AUTHORIZATION'
+  | 'NO_MATERIAL'
+  | 'PROMOTER_ERROR'
+  | 'OTHER';
+
 export interface UploadPhotosRequest {
   visitId: string;
   photos: Array<{
@@ -65,6 +73,11 @@ export const visitService = {
 
   async checkOut(data: CheckOutRequest) {
     const response = await apiClient.post(apiConfig.ENDPOINTS.PROMOTER.CHECKOUT, data);
+    return response.data;
+  },
+
+  async justifyMissingIndustries(visitId: string, items: Array<{ industryId: string; reason: IndustryMissReason; note?: string }>) {
+    const response = await apiClient.post(`/promoters/visits/${visitId}/justify-missing-industries`, { items });
     return response.data;
   },
 

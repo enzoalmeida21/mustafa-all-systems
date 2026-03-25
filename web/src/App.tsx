@@ -19,6 +19,7 @@ import StoreIndustriesConfig from './pages/StoreIndustriesConfig';
 import IndustryOwnerDashboard from './pages/IndustryOwnerDashboard';
 import Admin from './pages/Admin';
 import PromoterOpsSupport from './pages/PromoterOpsSupport';
+import AdminTodayPromoterOverview from './pages/AdminTodayPromoterOverview';
 import Layout from './components/Layout';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -183,6 +184,14 @@ function AppRoutes() {
           element={
             <AdminRoute>
               <PromoterOpsSupport />
+            </AdminRoute>
+          }
+        />
+        <RouterRoute
+          path="admin/promoters/today"
+          element={
+            <AdminRoute>
+              <AdminTodayPromoterOverview />
             </AdminRoute>
           }
         />
